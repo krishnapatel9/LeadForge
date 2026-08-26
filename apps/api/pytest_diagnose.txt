@@ -1,0 +1,12 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.2, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\ASUS\OneDrive\Desktop\AIAutomationLeadProject\apps\api\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\ASUS\OneDrive\Desktop\AIAutomationLeadProject\apps\api
+plugins: anyio-4.14.2
+collecting ... collected 1 item
+
+tests/test_api_integration.py::test_full_lead_pipeline PASSED            [100%]
+
+============================== 1 passed in 2.87s ==============================
+
+=== STDERR ===
