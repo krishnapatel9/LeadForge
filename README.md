@@ -23,7 +23,7 @@ The entire application has been containerized for easy deployment and local test
 ```bash
 cd apps/api
 cp .env.example .env   
-# Open .env and fill in your ANTHROPIC_API_KEY 
+# Open .env and fill in your GEMINI_API_KEY 
 ```
 
 ### 2. Start the Stack (Docker)

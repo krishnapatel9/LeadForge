@@ -9,14 +9,16 @@ import logging
 import os
 from pathlib import Path
 
-import anthropic
+from google import genai
+from google.genai import errors as genai_errors
+from google.genai import types as genai_types
 
 logger = logging.getLogger("leadforge.ai_client")
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
-MODEL = os.environ.get("LEADFORGE_MODEL", "claude-sonnet-4-6")
+MODEL = os.environ.get("LEADFORGE_MODEL", "gemini-2.5-flash")
 
-_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 
 def _load_prompt(name: str) -> str:
@@ -48,19 +50,19 @@ def call_structured(prompt_name: str, template_vars: dict, max_retries: int = 3)
     last_error: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
-            response = _client.messages.create(
+            response = _client.models.generate_content(
                 model=MODEL,
-                max_tokens=1000,
-                system=system,
-                messages=[{"role": "user", "content": user_message}],
+                contents=user_message,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=system,
+                    max_output_tokens=1000,
+                ),
             )
-            text = "".join(
-                block.text for block in response.content if block.type == "text"
-            ).strip()
+            text = (response.text or "").strip()
             # strip accidental code fences
             text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
             return json.loads(text)
-        except (json.JSONDecodeError, anthropic.APIError) as exc:
+        except (json.JSONDecodeError, genai_errors.APIError) as exc:
             last_error = exc
             logger.warning(
                 "ai_client call failed (attempt %s/%s) for prompt=%s: %s",

@@ -5,6 +5,7 @@ import { useToast } from "./components/Toast";
 import { Skeleton } from "./components/ui/skeleton";
 import LeadDossier from "./components/LeadDossier";
 import { trackEvent } from "../lib/analytics";
+import { API_BASE } from "../lib/site";
 import { Filter, SlidersHorizontal, Flame, ThermometerSun, AlertCircle } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Badge } from "./components/ui/badge";
@@ -41,7 +42,7 @@ export default function PipelinePage() {
 
   const fetchLeads = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8000/leads");
+      const res = await fetch(`${API_BASE}/leads`);
       if (res.ok) {
         const data = await res.json();
         if (data && data.length > 0) {
@@ -116,7 +117,7 @@ export default function PipelinePage() {
     async function loadDetails() {
       setDetailsLoading(true);
       try {
-        const res = await fetch(`http://localhost:8000/leads/${selectedLeadId}`);
+        const res = await fetch(`${API_BASE}/leads/${selectedLeadId}`);
         if (res.ok) {
           const data = await res.json();
           setDetails(data);
@@ -208,7 +209,7 @@ export default function PipelinePage() {
     if (!selectedLeadId) return;
     setSavingOutreach(true);
     try {
-      const res = await fetch(`http://localhost:8000/leads/${selectedLeadId}/outreach/approve`, {
+      const res = await fetch(`${API_BASE}/leads/${selectedLeadId}/outreach/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subject: editSubject, body: editBody }),
@@ -232,7 +233,7 @@ export default function PipelinePage() {
     if (!selectedLeadId) return;
     setSavingOutreach(true);
     try {
-      const res = await fetch(`http://localhost:8000/leads/${selectedLeadId}/outreach/reject`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/leads/${selectedLeadId}/outreach/reject`, { method: "POST" });
       if (res.ok) {
         showToast("Draft rejected", "warning");
         trackEvent("lead_rejected", { leadId: selectedLeadId });
@@ -250,9 +251,9 @@ export default function PipelinePage() {
     if (!selectedLeadId) return;
     showToast("Triggering Claude synthesis...", "info");
     try {
-      await fetch(`http://localhost:8000/leads/${selectedLeadId}/research`, { method: "POST" });
+      await fetch(`${API_BASE}/leads/${selectedLeadId}/research`, { method: "POST" });
       await fetchLeads();
-      const detRes = await fetch(`http://localhost:8000/leads/${selectedLeadId}`);
+      const detRes = await fetch(`${API_BASE}/leads/${selectedLeadId}`);
       if (detRes.ok) setDetails(await detRes.json());
       showToast("Research synthesis completed", "success");
     } catch (err) {
@@ -264,9 +265,9 @@ export default function PipelinePage() {
     if (!selectedLeadId) return;
     showToast("Recomputing ICP score...", "info");
     try {
-      await fetch(`http://localhost:8000/leads/${selectedLeadId}/score`, { method: "POST" });
+      await fetch(`${API_BASE}/leads/${selectedLeadId}/score`, { method: "POST" });
       await fetchLeads();
-      const detRes = await fetch(`http://localhost:8000/leads/${selectedLeadId}`);
+      const detRes = await fetch(`${API_BASE}/leads/${selectedLeadId}`);
       if (detRes.ok) setDetails(await detRes.json());
       showToast("Score recomputed", "success");
     } catch (err) {
@@ -278,9 +279,9 @@ export default function PipelinePage() {
     if (!selectedLeadId) return;
     showToast("Generating Claude outreach draft...", "info");
     try {
-      await fetch(`http://localhost:8000/leads/${selectedLeadId}/draft-outreach`, { method: "POST" });
+      await fetch(`${API_BASE}/leads/${selectedLeadId}/draft-outreach`, { method: "POST" });
       await fetchLeads();
-      const detRes = await fetch(`http://localhost:8000/leads/${selectedLeadId}`);
+      const detRes = await fetch(`${API_BASE}/leads/${selectedLeadId}`);
       if (detRes.ok) setDetails(await detRes.json());
       showToast("Outreach drafted", "success");
     } catch (err) {

@@ -12,7 +12,7 @@ import { Database, Zap, Cpu, Code2, Link as LinkIcon, ExternalLink, Copy } from 
 
 interface HealthData {
   database: string;
-  anthropic_api: string;
+  gemini_api: string;
   unresolved_pipeline_errors: number;
   apollo_integration: string;
   clay_integration: string;
@@ -113,30 +113,30 @@ export default function SettingsPage() {
               </CardFooter>
             </Card>
 
-            {/* Anthropic Claude API */}
+            {/* Google Gemini API */}
             <Card className="border shadow-sm">
               <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
                 <div className="space-y-1">
                   <CardTitle className="text-sm flex items-center gap-2">
                     <Zap className="w-4 h-4 text-purple-500" />
-                    Anthropic Claude LLM API
+                    Google Gemini LLM API
                   </CardTitle>
                   <CardDescription className="text-xs">Powers research summarization and drafting.</CardDescription>
                 </div>
-                <Badge variant="outline" className={health?.anthropic_api === "connected" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"}>
-                  {health && health.anthropic_api === "connected" ? "CONNECTED" : "ACTIVE"}
+                <Badge variant="outline" className={health?.gemini_api === "connected" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"}>
+                  {health && health.gemini_api === "connected" ? "CONNECTED" : "ACTIVE"}
                 </Badge>
               </CardHeader>
               <CardFooter className="pt-3 border-t bg-muted/20 flex justify-between items-center text-xs">
-                <span className="text-muted-foreground font-mono">Model: claude-3.5-sonnet</span>
-                <Button 
-                  variant="link" 
-                  size="sm" 
-                  onClick={() => handleTestConnection("anthropic")}
-                  disabled={testing === "anthropic"}
+                <span className="text-muted-foreground font-mono">Model: gemini-2.5-flash</span>
+                <Button
+                  variant="link"
+                  size="sm"
+                  onClick={() => handleTestConnection("gemini")}
+                  disabled={testing === "gemini"}
                   className="h-auto p-0 font-bold"
                 >
-                  {testing === "anthropic" ? "Testing..." : "Test Inference"}
+                  {testing === "gemini" ? "Testing..." : "Test Inference"}
                 </Button>
               </CardFooter>
             </Card>

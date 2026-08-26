@@ -25,7 +25,7 @@ export default function PrivacyPage() {
             
             <h2 className="text-foreground">AI Processing</h2>
             <p>
-              LeadForge utilizes third-party LLMs (Anthropic Claude) to synthesize research and draft outreach. Data processed through these APIs is subject to their respective privacy agreements and is not used to train base models.
+              LeadForge utilizes third-party LLMs (Google Gemini) to synthesize research and draft outreach. Data processed through these APIs is subject to their respective privacy agreements and is not used to train base models.
             </p>
 
             <h2 className="text-foreground">Data Security</h2>

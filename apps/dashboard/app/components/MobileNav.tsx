@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { SITE } from "../../lib/site";
+import { SITE, API_BASE } from "../../lib/site";
 import { 
   LayoutDashboard, 
   CheckSquare, 
@@ -40,7 +40,7 @@ export default function MobileNav() {
   useEffect(() => {
     async function fetchApprovalCount() {
       try {
-        const res = await fetch("http://localhost:8000/leads");
+        const res = await fetch(`${API_BASE}/leads`);
         if (res.ok) {
           const leads = await res.json();
           const awaiting = leads.filter((l: any) => l.stage === "outreach_drafted");

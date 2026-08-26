@@ -37,7 +37,7 @@ async def test_full_lead_pipeline(mock_outreach, mock_research):
         assert response.status_code == 200
         data = response.json()
         assert "database" in data
-        assert "anthropic_api" in data
+        assert "gemini_api" in data
         assert "unresolved_pipeline_errors" in data
 
         # 1. Ingest a lead

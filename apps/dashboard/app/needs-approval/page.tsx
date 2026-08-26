@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useToast } from "../components/Toast";
 import { trackEvent } from "../../lib/analytics";
+import { API_BASE } from "../../lib/site";
 import { CheckCircle2, XCircle, Keyboard, Mail, Building2, User } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
@@ -36,7 +37,7 @@ export default function NeedsApprovalPage() {
 
   const fetchDrafts = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8000/leads");
+      const res = await fetch(`${API_BASE}/leads`);
       if (res.ok) {
         const leads = await res.json();
         const draftedLeads = leads.filter(
@@ -46,7 +47,7 @@ export default function NeedsApprovalPage() {
         const fullDrafts = await Promise.all(
           draftedLeads.map(async (l: any) => {
             try {
-              const detRes = await fetch(`http://localhost:8000/leads/${l.id}`);
+              const detRes = await fetch(`${API_BASE}/leads/${l.id}`);
               if (detRes.ok) {
                 const det = await detRes.json();
                 const activeMsg = det.outreach?.find((m: any) => m.status === "draft");
@@ -119,7 +120,7 @@ export default function NeedsApprovalPage() {
     setSaving(true);
     try {
       const res = await fetch(
-        `http://localhost:8000/leads/${target.id}/outreach/approve`,
+        `${API_BASE}/leads/${target.id}/outreach/approve`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -154,7 +155,7 @@ export default function NeedsApprovalPage() {
     setSaving(true);
     try {
       const res = await fetch(
-        `http://localhost:8000/leads/${target.id}/outreach/reject`,
+        `${API_BASE}/leads/${target.id}/outreach/reject`,
         { method: "POST" }
       );
       if (res.ok) {

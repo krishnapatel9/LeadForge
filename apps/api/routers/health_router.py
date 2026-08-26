@@ -24,8 +24,8 @@ async def system_health(db: AsyncSession = Depends(get_db)):
     except Exception as exc:
         db_status = f"error: {exc}"
 
-    # 2. Test Anthropic API config
-    anthropic_configured = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    # 2. Test Gemini API config
+    gemini_configured = bool(os.environ.get("GEMINI_API_KEY"))
     
     # 3. Get unresolved errors count
     try:
@@ -37,7 +37,7 @@ async def system_health(db: AsyncSession = Depends(get_db)):
 
     return {
         "database": db_status,
-        "anthropic_api": "configured" if anthropic_configured else "missing_key",
+        "gemini_api": "configured" if gemini_configured else "missing_key",
         "unresolved_pipeline_errors": unresolved_errors,
         "apollo_integration": "active", # Mocked for POC/MVP sequence
         "clay_integration": "active",
