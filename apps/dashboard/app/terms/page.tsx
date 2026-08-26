@@ -30,7 +30,7 @@ export default function TermsPage() {
 
             <h2 className="text-foreground">3. Service Availability</h2>
             <p>
-              While we strive for high availability, LeadForge is provided "as is" and "as available". We reserve the right to modify, suspend, or discontinue the service with or without notice.
+              While we strive for high availability, LeadForge is provided &quot;as is&quot; and &quot;as available&quot;. We reserve the right to modify, suspend, or discontinue the service with or without notice.
             </p>
           </CardContent>
         </Card>
