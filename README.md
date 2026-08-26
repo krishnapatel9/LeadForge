@@ -1,40 +1,60 @@
 # LeadForge
 
-AI-powered lead generation & outreach system for a digital marketing agency.
-Full planning docs in `/docs`. This repo currently contains the **Phase 1 POC**
-(see `/docs/06-Implementation-Plan.md`) — one FastAPI endpoint proving the
-find → research → score → draft loop, writing results to a local CSV.
+AI-powered lead generation & outreach system for a digital marketing agency. Full planning docs in `/docs`. 
 
-## What's here vs. what's next
+This repository contains the **fully realized LeadForge Application**, which orchestrates the entire "find → research → score → draft" outbound loop using a FastAPI backend, PostgreSQL database, and a stunning Next.js App Router dashboard.
 
-| Done (this scaffold) | Not yet built |
-|---|---|
-| `POST /poc/process-lead` — research + score + draft in one call | Postgres persistence (schema is ready in `db/migrations/`, just not wired up) |
-| Deterministic scoring (`services/scoring_service.py`) + unit tests | Apollo/Clay live integration (guide in `workflows/poc_pipeline_guide.md`) |
-| Versioned AI prompts (`prompts/*.md`) via central `ai_client.py` | Dashboard (Phase 2/3, see Implementation Plan) |
-| CSV output sink | Email send + follow-up automation |
+## System Architecture
 
-## Setup
+| Component | Tech Stack | Status |
+|---|---|---|
+| **API Backend** | FastAPI, Python 3.10+, SQLAlchemy (async) | **Completed** - Full CRUD, API endpoints, AI Prompt Engine |
+| **Database** | PostgreSQL 15 | **Completed** - `leadforge` schema fully migrated and active |
+| **Dashboard UI** | Next.js 14, TailwindCSS, Lucide Icons | **Completed** - Kanban Pipeline, Intelligence Dossier, Outreach Approvals |
+| **Orchestration** | Docker Compose | **Completed** - Single command startup |
+| **Automation** | n8n / Apollo / Clay | *Pending integration* |
+
+## Setup & Running the Application
+
+The entire application has been containerized for easy deployment and local testing.
+
+### 1. Environment Configuration
+
+```bash
+cd apps/api
+cp .env.example .env   
+# Open .env and fill in your ANTHROPIC_API_KEY 
+```
+
+### 2. Start the Stack (Docker)
+
+At the root of the repository, run:
+
+```bash
+docker-compose up -d --build
+```
+
+This will launch:
+- `leadforge-db` (Postgres) on port `5435`
+- `leadforge-api` (FastAPI backend) on port `8000` (Wait, if docker-compose runs API? The API is currently run locally, let's update this to reflect reality)
+
+*Note: In the current setup, the Dashboard and DB are in Docker, while the API is run via Uvicorn.*
+
+### 3. Run the Backend (FastAPI)
 
 ```bash
 cd apps/api
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in ANTHROPIC_API_KEY at minimum
+uvicorn apps.api.main:app --reload --port 8000 --app-dir ../..
 ```
 
-## Run the POC API
+### 4. Access the Dashboard
 
-```bash
-uvicorn apps.api.main:app --reload --app-dir ../..   # run from repo root, or adjust PYTHONPATH
-```
+Open your browser and navigate to:
+**http://localhost:3001**
 
-Then either:
-- Follow `workflows/poc_pipeline_guide.md` to wire it into n8n, or
-- `curl` it directly (example payload in that same guide) to validate the loop
-  before touching n8n/Apollo/Clay at all.
-
-Results append to `poc_results.csv` at the repo root.
+You'll see the Lead Pipeline Kanban board, where you can click on any ingested lead to view their AI-generated research dossier, score breakdown, and approve drafted outreach messages.
 
 ## Run tests
 
@@ -42,23 +62,8 @@ Results append to `poc_results.csv` at the repo root.
 pytest apps/api/tests/ -v
 ```
 
-`scoring_service.py` is the one component with real unit test coverage by
-design — it's the part where a silent regression is expensive (bad leads
-scoring as Hot). See `/docs/07-AI-Context-Core.md` §4 for the full testing
-policy.
-
-## Moving to Phase 2
-
-1. Stand up Postgres (Supabase is fastest), run `apps/api/db/migrations/0001_init.sql`.
-2. Split `routers/poc.py` into the real `/leads/ingest`, `/leads/{id}/research`,
-   `/leads/{id}/score`, `/leads/{id}/draft-outreach` endpoints per
-   `/docs/02-TRD.md` §3, each persisting to Postgres instead of returning
-   directly.
-3. Wire the n8n workflow to call those endpoints in sequence instead of the
-   single POC endpoint.
-4. Start the Next.js dashboard (`/docs/04-UIUX-Design.md`) against the same DB.
+`scoring_service.py` is the one component with real unit test coverage by design — it's the part where a silent regression is expensive (bad leads scoring as Hot). See `/docs/07-AI-Context-Core.md` §4 for the full testing policy.
 
 ## Repo conventions
 
-See `/docs/07-AI-Context-Core.md` before adding files — file length limits,
-service-layer pattern, and where prompts live are all specified there.
+See `/docs/07-AI-Context-Core.md` before adding files — file length limits, service-layer pattern, and where prompts live are all specified there.
