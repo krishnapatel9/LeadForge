@@ -1,34 +1,29 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
-import SidebarNav from "./components/SidebarNav";
-import MobileNav from "./components/MobileNav";
-import TopBar from "./components/TopBar";
+import Header from "./components/Header";
 import CookieConsent from "./components/CookieConsent";
 import { ToastProvider } from "./components/Toast";
 import { SITE } from "../lib/site";
-
-const inter = Inter({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-inter",
-});
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
-  themeColor: "#4f46e5",
+  themeColor: "#000000",
+  viewportFit: "cover",
 };
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE.url),
   title: {
-    default: "Lead Pipeline | LeadForge Intelligence",
-    template: `%s | ${SITE.name}`,
+    default: "LeadForge",
+    template: `%s | LeadForge`,
   },
   description: SITE.description,
-  applicationName: SITE.name,
+  applicationName: "LeadForge",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({
@@ -37,30 +32,31 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={inter.variable}>
-      <body className={`${inter.className} min-h-screen antialiased flex bg-background text-foreground`}>
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem("lf-theme");if(t){document.documentElement.dataset.theme=t;}}catch(e){}})()`,
+          }}
+        />
+      </head>
+      <body>
         <ToastProvider>
           {/* Accessible Skip-to-content link */}
-          <a href="#main-content" className="skip-to-content">
+          <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:p-2 focus:bg-black focus:text-white">
             Skip to main content
           </a>
 
-          {/* Desktop Sidebar */}
-          <SidebarNav />
+          {/* Prototype Top Navigation Header */}
+          <Header />
 
           {/* Main Application Container */}
-          <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-            {/* Top Navigation */}
-            <TopBar />
-            
-            {/* Mobile Nav Drawer */}
-            <MobileNav />
+          <main id="main-content" className="app-main" tabIndex={-1}>
+            {children}
+          </main>
 
-            {/* Main Content Area */}
-            <main id="main-content" tabIndex={-1} className="flex-1 overflow-auto outline-none">
-              {children}
-            </main>
-          </div>
+          {/* Toast Notification Container element */}
+          <div id="toast" role="status" aria-live="polite"></div>
 
           {/* Transparent Cookie Consent Banner */}
           <CookieConsent />

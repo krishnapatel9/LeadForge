@@ -2,8 +2,9 @@
 const nextConfig = {
   compress: true,
   poweredByHeader: false,
-  images: {
-    formats: ["image/avif", "image/webp"],
+  webpack: (config) => {
+    config.cache = false;
+    return config;
   },
 };
 

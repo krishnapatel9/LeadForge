@@ -1,39 +1,32 @@
 "use client";
 
-import { Shield } from "lucide-react";
-import { Card, CardContent } from "../components/ui/card";
-
 export default function PrivacyPage() {
   return (
-    <div className="flex-1 flex flex-col min-h-screen bg-muted/10">
-      <header className="px-8 py-6 border-b bg-background">
-        <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-          <Shield className="w-6 h-6 text-primary" /> Privacy Policy
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Last updated: October 2026
-        </p>
-      </header>
+    <div>
+      <h1>Privacy Policy</h1>
+      <p className="sub">Last updated: October 2026</p>
 
-      <div className="flex-1 p-8 overflow-y-auto max-w-4xl mx-auto w-full">
-        <Card className="border shadow-sm">
-          <CardContent className="p-8 prose prose-sm dark:prose-invert max-w-none text-muted-foreground">
-            <h2 className="text-foreground">Data Collection and Usage</h2>
-            <p>
-              We collect information that you provide directly to us, including when you create an account, build a campaign, or communicate with us. This includes contact data and B2B firmographics sourced through our integrations (Apollo, Clay).
-            </p>
-            
-            <h2 className="text-foreground">AI Processing</h2>
-            <p>
-              LeadForge utilizes third-party LLMs (Google Gemini) to synthesize research and draft outreach. Data processed through these APIs is subject to their respective privacy agreements and is not used to train base models.
-            </p>
+      <div style={{ maxWidth: "720px", display: "flex", flexDirection: "column", gap: "24px" }}>
+        <section style={{ borderTop: "1px solid var(--line)", paddingTop: "16px" }}>
+          <h2 style={{ fontSize: "18px", fontWeight: 700, margin: "0 0 8px" }}>Data Collection and Usage</h2>
+          <p style={{ color: "var(--mute)", lineHeight: 1.6, margin: 0 }}>
+            We collect information that you provide directly to us, including when you configure campaign ICPs or trigger lead enrichment. This includes work email, title, and public B2B firmographics sourced through integrations (Apollo, Clay).
+          </p>
+        </section>
 
-            <h2 className="text-foreground">Data Security</h2>
-            <p>
-              We implement industry-standard security measures to protect your operational data. However, no security system is impenetrable, and we cannot guarantee the security of our databases.
-            </p>
-          </CardContent>
-        </Card>
+        <section style={{ borderTop: "1px solid var(--line)", paddingTop: "16px" }}>
+          <h2 style={{ fontSize: "18px", fontWeight: 700, margin: "0 0 8px" }}>AI Processing & Zero-Training Guarantees</h2>
+          <p style={{ color: "var(--mute)", lineHeight: 1.6, margin: 0 }}>
+            LeadForge utilizes API models (Anthropic Claude, Google Gemini) to synthesize research and draft outreach. Data processed through these APIs is subject to enterprise privacy agreements and is never used to train foundation models.
+          </p>
+        </section>
+
+        <section style={{ borderTop: "1px solid var(--line)", paddingTop: "16px", borderBottom: "1px solid var(--line)", paddingBottom: "16px" }}>
+          <h2 style={{ fontSize: "18px", fontWeight: 700, margin: "0 0 8px" }}>Compliance & CAN-SPAM</h2>
+          <p style={{ color: "var(--mute)", lineHeight: 1.6, margin: 0 }}>
+            Every outreach draft enforces one-click unsubscribe links and physical address inclusion. When an unsubscribe or bounce occurs, the contact is permanently marked <code>do_not_contact</code> in our PostgreSQL database.
+          </p>
+        </section>
       </div>
     </div>
   );

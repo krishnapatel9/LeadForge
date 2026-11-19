@@ -2,123 +2,103 @@
 
 import { useState } from "react";
 import { useToast } from "../components/Toast";
-import { Button } from "../components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
-import { Download, TrendingUp, Users, Target, CheckCircle2, MessageSquare, Calendar } from "lucide-react";
-import { Badge } from "../components/ui/badge";
 
-export default function ReportsPage() {
+export default function PerformancePage() {
   const { showToast } = useToast();
-  const [stats] = useState({
-    leadsSourced: 286,
-    avgScore: 75,
-    approvalRate: "92%",
-    emailsSent: 263,
-    repliesReceived: 34,
-    meetingsBooked: 11,
-  });
 
-  const handleExportCSV = () => {
-    showToast("Generating operational CSV export...", "info");
+  const [kpis] = useState([
+    { label: "Leads sourced", val: "286", delta: "+12%", isNegative: false },
+    { label: "Average score", val: "75/100", delta: "+3 pts", isNegative: false },
+    { label: "Approved by you", val: "92%", delta: "−1%", isNegative: true },
+    { label: "Emails sent", val: "263", delta: "+8%", isNegative: false },
+    { label: "Replies", val: "34", delta: "+14%", isNegative: false },
+    { label: "Meetings booked", val: "11", delta: "+22%", isNegative: false },
+  ]);
+
+  const [funnel] = useState([
+    { stage: "Leads ingested", count: 286 },
+    { stage: "Researched and scored", count: 278 },
+    { stage: "Outreach approved", count: 263 },
+    { stage: "Prospect replied", count: 34 },
+    { stage: "Meeting booked", count: 11 },
+  ]);
+
+  const handleDownloadCSV = () => {
+    showToast("Generating operational CSV export...");
     setTimeout(() => {
-      showToast("Pipeline performance metrics exported to CSV", "success", "Export Ready");
+      showToast("CSV export ready: pipeline_performance_nov.csv");
     }, 1000);
   };
 
-  const kpis = [
-    { label: "Leads Sourced", val: stats.leadsSourced, icon: Users, trend: "+12%", color: "text-blue-500", bg: "bg-blue-500/10" },
-    { label: "Avg ICP Score", val: `${stats.avgScore}/100`, icon: Target, trend: "+3 pts", color: "text-primary", bg: "bg-primary/10" },
-    { label: "AE Approval Rate", val: stats.approvalRate, icon: CheckCircle2, trend: "-1%", color: "text-primary", bg: "bg-primary/10" },
-    { label: "Emails Sent", val: stats.emailsSent, icon: MessageSquare, trend: "+8%", color: "text-slate-500", bg: "bg-slate-500/10" },
-    { label: "Replies Received", val: stats.repliesReceived, icon: MessageSquare, trend: "+14%", color: "text-amber-500", bg: "bg-amber-500/10" },
-    { label: "Meetings Booked", val: stats.meetingsBooked, icon: Calendar, trend: "+22%", color: "text-emerald-500", bg: "bg-emerald-500/10" },
-  ];
-
-  const funnel = [
-    { label: "1. Leads Ingested", count: 286, percentage: "100%", color: "bg-slate-200 dark:bg-slate-800" },
-    { label: "2. Researched & Scored", count: 278, percentage: "97.2%", color: "bg-blue-500/60" },
-    { label: "3. Outreach Approved", count: 263, percentage: "92.0%", color: "bg-primary" },
-    { label: "4. Prospect Replied", count: 34, percentage: "12.9%", color: "bg-amber-400" },
-    { label: "5. Sales Meeting Booked", count: 11, percentage: "4.2%", color: "bg-emerald-500" },
-  ];
+  const totalSourced = 286;
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-4rem)] overflow-hidden bg-slate-50/50 bg-mesh">
-      {/* Header */}
-      <header className="px-8 py-6 border-b bg-white/80 backdrop-blur-xl shrink-0">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-              <TrendingUp className="w-6 h-6 text-primary" /> Performance Analytics
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Top-line operational throughput and multi-stage conversion rates.
-            </p>
+    <div>
+      <h1>Performance</h1>
+      <p className="sub">
+        What happened to the 286 leads sourced this period, and where they dropped out.
+      </p>
+
+      {/* 6-Column KPI Grid with alternating .inv */}
+      <div className="kpis">
+        {kpis.map((k, i) => (
+          <div key={k.label} className={`kpi ${i % 2 === 1 ? "inv" : ""}`}>
+            <b>{k.val}</b>
+            <span>{k.label}</span>
+            <em className={k.isNegative ? "neg" : ""}>{k.delta}</em>
           </div>
+        ))}
+      </div>
 
-          <Button variant="outline" onClick={handleExportCSV}>
-            <Download className="w-4 h-4 mr-2" />
-            Export CSV
-          </Button>
-        </div>
-      </header>
+      {/* Funnel Section */}
+      <div className="fun">
+        <h2>Where leads drop out</h2>
+        <p className="sub" style={{ marginBottom: "12px" }}>
+          3.8% of sourced leads end in a meeting.
+        </p>
 
-      {/* Main Container */}
-      <div className="flex-1 p-8 overflow-y-auto max-w-7xl mx-auto w-full space-y-8">
-        {/* KPI Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          {kpis.map((kpi) => (
-            <Card key={kpi.label} className="border shadow-sm">
-              <CardContent className="p-4 flex flex-col justify-between h-full">
-                <div className="flex items-center justify-between mb-4">
-                  <div className={`p-2 rounded-md ${kpi.bg}`}>
-                    <kpi.icon className={`w-4 h-4 ${kpi.color}`} />
-                  </div>
-                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-500/10 px-1.5 py-0.5 rounded">
-                    {kpi.trend}
+        {funnel.map((f, i) => {
+          const p = (f.count / totalSourced) * 100;
+          const next = funnel[i + 1];
+          const loss = next ? f.count - next.count : 0;
+
+          return (
+            <div key={f.stage}>
+              <div className="fr">
+                <div>{f.stage}</div>
+                <div
+                  className={`bar ${i % 2 === 1 ? "out" : ""}`}
+                  style={{ width: `${Math.max(p, 8)}%` }}
+                >
+                  {f.count}{" "}
+                  <span style={{ fontWeight: 400, marginLeft: "8px", opacity: 0.8 }}>
+                    {p.toFixed(1)}%
                   </span>
                 </div>
-                <div>
-                  <h3 className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider mb-1">{kpi.label}</h3>
-                  <div className="text-2xl font-black text-foreground">{kpi.val}</div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-
-        {/* Funnel Conversions */}
-        <Card className="border shadow-sm">
-          <CardHeader className="pb-4">
-            <div className="flex justify-between items-center">
-              <div>
-                <CardTitle>Pipeline Conversion Funnel</CardTitle>
-                <CardDescription>Progression from initial sourcing to meeting booked.</CardDescription>
               </div>
-              <Badge className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 border-transparent">
-                Overall Conv: 3.8%
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-5">
-              {funnel.map((step) => (
-                <div key={step.label} className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6">
-                  <div className="w-48 text-sm font-semibold text-foreground">{step.label}</div>
-                  <div className="flex-1 bg-muted rounded-md h-8 overflow-hidden relative">
-                    <div className={`${step.color} h-full transition-all duration-1000 ease-in-out flex items-center`} style={{ width: step.percentage }}>
-                      {/* Optional: Add a subtle pattern or gradient inside the bar */}
-                    </div>
-                    <span className="absolute inset-y-0 right-3 flex items-center text-xs font-bold text-foreground">
-                      {step.count} <span className="text-muted-foreground ml-1">({step.percentage})</span>
-                    </span>
+
+              {next && (
+                <div className="fr" style={{ padding: 0 }}>
+                  <div></div>
+                  <div className="loss">
+                    <b>{loss} lost</b> before {next.stage.toLowerCase()}
                   </div>
                 </div>
-              ))}
+              )}
             </div>
-          </CardContent>
-        </Card>
+          );
+        })}
       </div>
+
+      <p style={{ marginTop: "32px" }}>
+        <button
+          className="btn"
+          onClick={handleDownloadCSV}
+          type="button"
+        >
+          Download CSV
+        </button>
+      </p>
     </div>
   );
 }
