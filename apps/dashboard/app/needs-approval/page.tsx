@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useToast } from "../components/Toast";
 import { trackEvent } from "../../lib/analytics";
+import { apiErrorMessage, apiFetch } from "../../lib/api";
 
 interface LeadDraft {
   id: string;
@@ -30,7 +31,7 @@ export default function NeedsApprovalPage() {
 
   const fetchDrafts = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8000/leads");
+      const res = await apiFetch("/leads");
       if (res.ok) {
         const leads = await res.json();
         const draftedLeads = leads.filter(
@@ -40,7 +41,7 @@ export default function NeedsApprovalPage() {
         const fullDrafts = await Promise.all(
           draftedLeads.map(async (l: any) => {
             try {
-              const detRes = await fetch(`http://localhost:8000/leads/${l.id}`);
+              const detRes = await apiFetch(`/leads/${l.id}`);
               if (detRes.ok) {
                 const det = await detRes.json();
                 const activeMsg = det.outreach?.find((m: any) => m.status === "draft");
@@ -123,6 +124,16 @@ export default function NeedsApprovalPage() {
     }
   }, [drafts, selectedIndex]);
 
+  const removeCurrentDraft = useCallback(() => {
+    setDrafts((prev) => {
+      const next = [...prev];
+      next.splice(selectedIndex, 1);
+      return next;
+    });
+    setSelectedIndex((prev) => Math.max(0, Math.min(prev, drafts.length - 2)));
+    setEditing(false);
+  }, [selectedIndex, drafts.length]);
+
   const handleApprove = useCallback(async () => {
     if (drafts.length === 0 || !drafts[selectedIndex]) return;
     const current = drafts[selectedIndex];
@@ -130,7 +141,7 @@ export default function NeedsApprovalPage() {
 
     try {
       const updatedBody = editing && bodyRef.current ? bodyRef.current.innerText : editBody;
-      const res = await fetch(`http://localhost:8000/leads/${current.id}/outreach/approve`, {
+      const res = await apiFetch(`/leads/${current.id}/outreach/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subject: editSubject, body: updatedBody }),
@@ -139,22 +150,17 @@ export default function NeedsApprovalPage() {
       if (res.ok) {
         showToast(`Approved. ${current.full_name} is queued to send.`);
         trackEvent("lead_approved", { leadId: current.id });
+        removeCurrentDraft();
       } else {
-        showToast(`Approved. ${current.full_name} is queued to send.`);
+        // Keep the draft in the queue: it was not approved
+        showToast(await apiErrorMessage(res, "Failed to approve draft."), "error");
       }
     } catch {
-      showToast(`Approved. ${current.full_name} is queued to send.`);
+      showToast("Couldn't reach the API. The draft was not approved.", "error");
     } finally {
-      setDrafts((prev) => {
-        const next = [...prev];
-        next.splice(selectedIndex, 1);
-        return next;
-      });
-      setSelectedIndex((prev) => Math.max(0, Math.min(prev, drafts.length - 2)));
-      setEditing(false);
       setSaving(false);
     }
-  }, [drafts, selectedIndex, editing, editSubject, editBody, showToast]);
+  }, [drafts, selectedIndex, editing, editSubject, editBody, showToast, removeCurrentDraft]);
 
   const handleReject = useCallback(async () => {
     if (drafts.length === 0 || !drafts[selectedIndex]) return;
@@ -162,24 +168,22 @@ export default function NeedsApprovalPage() {
     setSaving(true);
 
     try {
-      await fetch(`http://localhost:8000/leads/${current.id}/outreach/reject`, {
+      const res = await apiFetch(`/leads/${current.id}/outreach/reject`, {
         method: "POST",
       });
-      showToast("Rejected. Draft removed.");
-      trackEvent("lead_rejected", { leadId: current.id });
+      if (res.ok) {
+        showToast("Rejected. Draft removed.");
+        trackEvent("lead_rejected", { leadId: current.id });
+        removeCurrentDraft();
+      } else {
+        showToast(await apiErrorMessage(res, "Failed to reject draft."), "error");
+      }
     } catch {
-      showToast("Rejected. Draft removed.");
+      showToast("Couldn't reach the API. The draft was not rejected.", "error");
     } finally {
-      setDrafts((prev) => {
-        const next = [...prev];
-        next.splice(selectedIndex, 1);
-        return next;
-      });
-      setSelectedIndex((prev) => Math.max(0, Math.min(prev, drafts.length - 2)));
-      setEditing(false);
       setSaving(false);
     }
-  }, [drafts, selectedIndex, showToast]);
+  }, [drafts, selectedIndex, showToast, removeCurrentDraft]);
 
   const handleToggleEdit = useCallback(() => {
     if (editing && bodyRef.current) {

@@ -7,7 +7,9 @@ per the TRD and Backend Schema doc.
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from apps.api.auth.dependencies import admin_or_service
 
 from apps.api.clients.results_writer import append_result
 from apps.api.models.schemas import LeadInput, LeadResult
@@ -19,7 +21,7 @@ router = APIRouter(prefix="/poc", tags=["poc"])
 logger = logging.getLogger("leadforge.poc")
 
 
-@router.post("/process-lead", response_model=LeadResult)
+@router.post("/process-lead", response_model=LeadResult, dependencies=[Depends(admin_or_service)])
 def process_lead(lead: LeadInput) -> LeadResult:
     research = generate_research_brief(lead)
     score = score_lead(lead, research)

@@ -1,9 +1,10 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload
 
+from apps.api.auth.dependencies import Principal, any_user, ensure_same_org, ingest_caller
 from apps.api.db.session import get_db
 from apps.api.models.orm.organization import Organization
 from apps.api.models.orm.company import Company
@@ -28,8 +29,17 @@ from apps.api.services.activity_service import log_activity
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
+# Stages a stale re-ingest may send back to "new" for fresh research. Leads past
+# these (contacted, replied, booked, won, lost, unsubscribed) keep their stage.
+RESEARCHABLE_STAGES = {"new", "enriched", "researched", "scored", "outreach_drafted"}
 
-@router.post("/ingest", response_model=IngestionResult, status_code=status.HTTP_201_CREATED)
+
+@router.post(
+    "/ingest",
+    response_model=IngestionResult,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(ingest_caller)],
+)
 async def ingest_lead(lead_in: LeadInput, db: AsyncSession = Depends(get_db)):
     # 1. Fetch the default organization
     org_result = await db.execute(select(Organization).limit(1))
@@ -42,7 +52,17 @@ async def ingest_lead(lead_in: LeadInput, db: AsyncSession = Depends(get_db)):
     org_id = org.id
 
     # 2. Check for duplicate lead
-    is_dup, existing_lead = await check_lead_duplicate(db, lead_in.email)
+    is_dup, existing_lead, existing_enrichment = await check_lead_duplicate(db, lead_in.email)
+
+    # An opted-out contact is never re-activated by a new ingest (CAN-SPAM):
+    # skip it entirely so no field, stage or flag is touched.
+    if existing_lead and existing_lead.do_not_contact:
+        return IngestionResult(
+            status="skipped",
+            reason="do_not_contact",
+            lead_id=existing_lead.id,
+        )
+
     if is_dup and existing_lead:
         return IngestionResult(
             status="skipped",
@@ -78,13 +98,15 @@ async def ingest_lead(lead_in: LeadInput, db: AsyncSession = Depends(get_db)):
 
     # 4. Resolve Lead
     if existing_lead:
-        # Existing stale lead, reset to new
+        # Existing stale lead: refresh its data. do_not_contact is never changed
+        # here (opted-out leads were skipped above), and a lead that has already
+        # been contacted keeps its pipeline stage instead of falling back to "new".
         existing_lead.full_name = lead_in.full_name
         existing_lead.title = lead_in.title
         existing_lead.linkedin_url = lead_in.linkedin_url
         existing_lead.email_verified = lead_in.email_verified
-        existing_lead.stage = "new"
-        existing_lead.do_not_contact = False
+        if existing_lead.stage in RESEARCHABLE_STAGES:
+            existing_lead.stage = "new"
         lead = existing_lead
     else:
         # Create new lead
@@ -104,17 +126,17 @@ async def ingest_lead(lead_in: LeadInput, db: AsyncSession = Depends(get_db)):
         await db.flush()
 
     # 5. Save/Update enrichment data specifically for lead
-    stmt_enrich = select(EnrichmentData).where(EnrichmentData.lead_id == lead.id)
-    enrich_res = await db.execute(stmt_enrich)
-    enrich = enrich_res.scalars().first()
-    
+    enrich = existing_enrichment
+
     # We parse hiring signals and news triggers from raw input keys
     hiring = lead_in.hiring_signals
     news = lead_in.news_triggers
-    
+
     if enrich:
         enrich.hiring_signals = hiring
         enrich.news_triggers = news
+        # Staleness is measured from this timestamp, so a refresh must move it
+        enrich.enriched_at = func.now()
     else:
         enrich = EnrichmentData(
             lead_id=lead.id,
@@ -142,14 +164,16 @@ async def ingest_lead(lead_in: LeadInput, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("", response_model=list[LeadListItem])
-async def list_leads(stage: str | None = None, db: AsyncSession = Depends(get_db)):
-    # Build query joining Lead and Company.
-    # To get the latest score, we can query lead_scores later or join them.
-    # Because of sqlite/postgres async compatibility, let's query leads and companies first,
-    # then fetch the latest score for each lead.
-    stmt = select(Lead).options(selectinload(Lead.company_id))  # Wait, company_id is a FK, or relational join?
-    # Let's write the query to fetch Lead and Company.
-    stmt = select(Lead, Company).join(Company, Lead.company_id == Company.id)
+async def list_leads(
+    stage: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(any_user),
+):
+    stmt = (
+        select(Lead, Company)
+        .join(Company, Lead.company_id == Company.id)
+        .where(Lead.org_id == principal.org_id)
+    )
     if stage:
         stmt = stmt.where(Lead.stage == stage)
     stmt = stmt.order_by(Lead.created_at.desc())
@@ -188,7 +212,11 @@ async def list_leads(stage: str | None = None, db: AsyncSession = Depends(get_db
 
 
 @router.get("/{lead_id}", response_model=LeadDetail)
-async def get_lead_detail(lead_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_lead_detail(
+    lead_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(any_user),
+):
     # Fetch lead and company
     stmt = select(Lead, Company).join(Company, Lead.company_id == Company.id).where(Lead.id == lead_id)
     result = await db.execute(stmt)
@@ -199,6 +227,7 @@ async def get_lead_detail(lead_id: uuid.UUID, db: AsyncSession = Depends(get_db)
             detail=f"Lead with id {lead_id} not found."
         )
     lead, company = row
+    ensure_same_org(principal, lead.org_id)
 
     # Fetch latest score
     score_stmt = (

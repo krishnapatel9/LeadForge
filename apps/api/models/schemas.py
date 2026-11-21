@@ -3,7 +3,9 @@ from pydantic import BaseModel, Field
 
 import uuid
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from apps.api.services.normalize import normalize_domain, normalize_email
 
 
 class LeadInput(BaseModel):
@@ -31,6 +33,22 @@ class LeadInput(BaseModel):
     # engagement signal, e.g. from a prior campaign or lead magnet interaction
     has_prior_engagement: bool = False
     campaign_id: uuid.UUID | None = None
+
+    @field_validator("email")
+    @classmethod
+    def _canonical_email(cls, value: str) -> str:
+        email = normalize_email(value)
+        if "@" not in email or email.startswith("@") or email.endswith("@"):
+            raise ValueError("email must be a valid address")
+        return email
+
+    @field_validator("domain")
+    @classmethod
+    def _canonical_domain(cls, value: str) -> str:
+        domain = normalize_domain(value)
+        if not domain or "." not in domain:
+            raise ValueError("domain must be a valid hostname, e.g. acme.com")
+        return domain
 
 
 class IngestionResult(BaseModel):

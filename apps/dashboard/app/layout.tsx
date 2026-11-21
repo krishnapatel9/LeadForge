@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import Header from "./components/Header";
+import AuthGate from "./components/AuthGate";
 import CookieConsent from "./components/CookieConsent";
 import { ToastProvider } from "./components/Toast";
 import { SITE } from "../lib/site";
@@ -47,13 +48,15 @@ export default function RootLayout({
             Skip to main content
           </a>
 
-          {/* Prototype Top Navigation Header */}
-          <Header />
+          <AuthGate>
+            {/* Prototype Top Navigation Header */}
+            <Header />
 
-          {/* Main Application Container */}
-          <main id="main-content" className="app-main" tabIndex={-1}>
-            {children}
-          </main>
+            {/* Main Application Container */}
+            <main id="main-content" className="app-main" tabIndex={-1}>
+              {children}
+            </main>
+          </AuthGate>
 
           {/* Toast Notification Container element */}
           <div id="toast" role="status" aria-live="polite"></div>

@@ -3,7 +3,26 @@ import httpx
 from unittest.mock import patch
 import uuid
 
+from sqlalchemy.future import select
+
+from apps.api.auth.security import hash_password, unsubscribe_token
+from apps.api.db.session import SessionLocal
 from apps.api.main import app
+from apps.api.models.orm.organization import Organization
+from apps.api.models.orm.user import User
+
+
+async def _create_test_user(role: str) -> tuple[str, str]:
+    """Creates a throwaway user in the live test database and returns (email, password)."""
+    email = f"test-{role}-{uuid.uuid4().hex[:8]}@agency-test.com"
+    password = uuid.uuid4().hex
+    async with SessionLocal() as db:
+        org = (await db.execute(select(Organization).limit(1))).scalars().first()
+        db.add(User(org_id=org.id, email=email, role=role,
+                    password_hash=hash_password(password), is_active=True))
+        await db.commit()
+    return email, password
+
 
 @pytest.fixture
 def anyio_backend():
@@ -32,6 +51,15 @@ async def test_full_lead_pipeline(mock_outreach, mock_research):
         response = await client.get("/health")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
+
+        # Everything else requires sign-in now
+        response = await client.get("/leads")
+        assert response.status_code == 401
+
+        email, password = await _create_test_user(role="admin")
+        response = await client.post("/auth/login", json={"email": email, "password": password})
+        assert response.status_code == 200, response.text
+        client.headers["Authorization"] = f"Bearer {response.json()['access_token']}"
 
         response = await client.get("/system-health")
         assert response.status_code == 200
@@ -140,8 +168,12 @@ async def test_full_lead_pipeline(mock_outreach, mock_research):
         assert len(response.json()["outreach"]) == 1
         assert response.json()["outreach"][0]["status"] == "draft"
 
-        # Trigger unsubscribe webhook
-        unsub_payload = {"email": lead2_payload["email"]}
+        # An unsigned unsubscribe request is refused
+        response = await client.post("/webhooks/unsubscribe", json={"email": lead2_payload["email"]})
+        assert response.status_code == 403
+
+        # Trigger unsubscribe webhook with the signed token from the email link
+        unsub_payload = {"email": lead2_payload["email"], "token": unsubscribe_token(lead2_payload["email"])}
         response = await client.post("/webhooks/unsubscribe", json=unsub_payload)
         assert response.status_code == 200
         assert response.json()["status"] == "unsubscribed"

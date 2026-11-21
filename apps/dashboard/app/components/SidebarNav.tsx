@@ -13,7 +13,8 @@ import {
   LogOut,
   Moon
 } from "lucide-react";
-import { SITE, API_BASE } from "../../lib/site";
+import { SITE } from "../../lib/site";
+import { apiFetch } from "../../lib/api";
 import { cn } from "../../lib/utils";
 
 export default function SidebarNav() {
@@ -23,7 +24,7 @@ export default function SidebarNav() {
   useEffect(() => {
     async function fetchApprovalCount() {
       try {
-        const res = await fetch(`${API_BASE}/leads`);
+        const res = await apiFetch(`/leads`);
         if (res.ok) {
           const leads = await res.json();
           const awaiting = leads.filter((l: any) => l.stage === "outreach_drafted");

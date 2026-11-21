@@ -3,38 +3,25 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from apps.api.auth.dependencies import Principal, approver, ensure_same_org, pipeline_caller
 from apps.api.db.session import get_db
 from apps.api.models.orm.lead import Lead
 from apps.api.models.orm.company import Company
 from apps.api.models.orm.research_brief import ResearchBrief
 from apps.api.models.orm.outreach_message import OutreachMessage
-from apps.api.models.orm.user import User
-from apps.api.models.orm.organization import Organization
 from apps.api.models.schemas import OutreachDraft
-from apps.api.services.outreach_service import draft_outreach_db
+from apps.api.services.outreach_service import draft_outreach_db, with_compliance_footer
 from apps.api.services.activity_service import log_activity
 
 router = APIRouter(prefix="/leads", tags=["outreach"])
 
 
-async def get_or_create_ae_user(db: AsyncSession, org_id: uuid.UUID) -> User:
-    user_stmt = select(User).limit(1)
-    user_res = await db.execute(user_stmt)
-    user = user_res.scalars().first()
-    if not user:
-        user = User(
-            org_id=org_id,
-            email="ae@agency.com",
-            name="Default Account Executive",
-            role="ae",
-        )
-        db.add(user)
-        await db.flush()
-    return user
-
-
 @router.post("/{lead_id}/draft-outreach", response_model=OutreachDraft)
-async def draft_outreach_endpoint(lead_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def draft_outreach_endpoint(
+    lead_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(pipeline_caller),
+):
     # 1. Fetch Lead
     lead_stmt = select(Lead).where(Lead.id == lead_id)
     lead_res = await db.execute(lead_stmt)
@@ -44,6 +31,7 @@ async def draft_outreach_endpoint(lead_id: uuid.UUID, db: AsyncSession = Depends
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Lead with id {lead_id} not found",
         )
+    ensure_same_org(principal, lead.org_id)
 
     # 2. Fetch Company
     company_stmt = select(Company).where(Company.id == lead.company_id)
@@ -100,14 +88,16 @@ class OutreachApprovalPayload(BaseModel):
 async def approve_outreach(
     lead_id: uuid.UUID,
     payload: OutreachApprovalPayload = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(approver),
 ):
     lead_stmt = select(Lead).where(Lead.id == lead_id)
     lead_res = await db.execute(lead_stmt)
     lead = lead_res.scalars().first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
-        
+    ensure_same_org(principal, lead.org_id)
+
     if lead.do_not_contact:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -119,6 +109,8 @@ async def approve_outreach(
         .where(OutreachMessage.lead_id == lead_id, OutreachMessage.status == "draft")
         .order_by(OutreachMessage.created_at.desc())
         .limit(1)
+        # Lock the draft so two approvals at once can't both send it
+        .with_for_update()
     )
     msg_res = await db.execute(msg_stmt)
     msg = msg_res.scalars().first()
@@ -132,23 +124,22 @@ async def approve_outreach(
         if payload.body is not None:
             msg.body = payload.body
 
-    # Dispatch email via transport client shim
-    await send_email(to_email=lead.email, subject=msg.subject, body=msg.body)
+    # Dispatch email via transport client shim. The unsubscribe footer is added at
+    # send time (not stored), so every message carries a valid signed opt-out link.
+    await send_email(to_email=lead.email, subject=msg.subject, body=with_compliance_footer(msg.body, lead.email))
 
-    ae_user = await get_or_create_ae_user(db, lead.org_id)
     msg.status = "approved"
-    msg.approved_by = ae_user.id
+    msg.approved_by = principal.user.id  # the person who actually approved it
     db.add(msg)
-    
+
     # Transition the lead stage to 'outreach_sent' (approved & dispatched stage)
     lead.stage = "outreach_sent"
     db.add(lead)
 
-    
     await log_activity(
         db=db,
         lead_id=lead_id,
-        actor=ae_user.email,
+        actor=principal.actor,
         action="outreach_approved",
         detail={"message_id": str(msg.id)},
     )
@@ -159,13 +150,18 @@ async def approve_outreach(
 
 
 @router.post("/{lead_id}/outreach/reject")
-async def reject_outreach(lead_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def reject_outreach(
+    lead_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(approver),
+):
     lead_stmt = select(Lead).where(Lead.id == lead_id)
     lead_res = await db.execute(lead_stmt)
     lead = lead_res.scalars().first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
-        
+    ensure_same_org(principal, lead.org_id)
+
     msg_stmt = (
         select(OutreachMessage)
         .where(OutreachMessage.lead_id == lead_id, OutreachMessage.status == "draft")
@@ -177,10 +173,9 @@ async def reject_outreach(lead_id: uuid.UUID, db: AsyncSession = Depends(get_db)
     if not msg:
         raise HTTPException(status_code=404, detail="No draft outreach message found for this lead.")
 
-    ae_user = await get_or_create_ae_user(db, lead.org_id)
     msg.status = "rejected"
     db.add(msg)
-    
+
     # When rejected, we transition stage back to 'scored' so it can be regenerated or ignored
     lead.stage = "scored"
     db.add(lead)
@@ -188,7 +183,7 @@ async def reject_outreach(lead_id: uuid.UUID, db: AsyncSession = Depends(get_db)
     await log_activity(
         db=db,
         lead_id=lead_id,
-        actor=ae_user.email,
+        actor=principal.actor,
         action="outreach_rejected",
         detail={"message_id": str(msg.id)},
     )

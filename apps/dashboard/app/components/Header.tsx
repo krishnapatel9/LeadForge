@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { apiFetch } from "../../lib/api";
+import { useAuth } from "./AuthGate";
 
 const NAV_ITEMS = [
   { href: "/", label: "Pipeline" },
@@ -18,28 +20,31 @@ export default function Header() {
   const [approvalCount, setApprovalCount] = useState<number>(0);
   const [mounted, setMounted] = useState(false);
 
+  const { user, signOut } = useAuth();
+
   useEffect(() => {
     setMounted(true);
+    if (!user) {
+      setApprovalCount(0);
+      return;
+    }
     async function fetchApprovalCount() {
       try {
-        const res = await fetch("http://localhost:8000/leads");
+        const res = await apiFetch("/leads");
         if (res.ok) {
           const leads = await res.json();
           const awaiting = leads.filter((l: any) => l.stage === "outreach_drafted");
           setApprovalCount(awaiting.length);
-        } else {
-          // Fallback demo state
-          setApprovalCount(1);
         }
       } catch (err) {
-        setApprovalCount(1);
+        // Keep the last known count
       }
     }
 
     fetchApprovalCount();
     const interval = setInterval(fetchApprovalCount, 8000);
     return () => clearInterval(interval);
-  }, []);
+  }, [user]);
 
   const toggleTheme = () => {
     const root = document.documentElement;
@@ -64,7 +69,7 @@ export default function Header() {
       </Link>
 
       <nav className="app-nav" id="nav" aria-label="Main Navigation">
-        {NAV_ITEMS.map((item) => {
+        {user && NAV_ITEMS.map((item) => {
           const isCurrent =
             item.href === "/"
               ? pathname === "/"
@@ -89,10 +94,20 @@ export default function Header() {
       </nav>
 
       <div className="who">
-        <span>
-          <i className="dot" aria-hidden="true" />
-          All systems running
-        </span>
+        {user ? (
+          <>
+            <span className="who-user" title={`Signed in as ${user.email} (${user.role})`}>
+              {user.name || user.email} · {user.role.toUpperCase()}
+            </span>
+            <button className="theme-btn" onClick={signOut} type="button">
+              Sign out
+            </button>
+          </>
+        ) : (
+          <Link href="/login" className="theme-btn">
+            Sign in
+          </Link>
+        )}
         <button
           id="theme"
           className="theme-btn"

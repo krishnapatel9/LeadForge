@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useToast } from "./components/Toast";
 import LeadDossier from "./components/LeadDossier";
 import { trackEvent } from "../lib/analytics";
+import { apiErrorMessage, apiFetch } from "../lib/api";
 
 interface Lead {
   id: string;
@@ -72,7 +73,7 @@ export default function PipelinePage() {
 
   const fetchLeads = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8000/leads");
+      const res = await apiFetch("/leads");
       if (res.ok) {
         const data = await res.json();
         if (data && data.length > 0) {
@@ -177,7 +178,7 @@ export default function PipelinePage() {
     async function loadDetails() {
       setDetailsLoading(true);
       try {
-        const res = await fetch(`http://localhost:8000/leads/${selectedLeadId}`);
+        const res = await apiFetch(`/leads/${selectedLeadId}`);
         if (res.ok) {
           const data = await res.json();
           setDetails(data);
@@ -255,8 +256,8 @@ export default function PipelinePage() {
     if (!selectedLeadId) return;
     setSavingOutreach(true);
     try {
-      const res = await fetch(
-        `http://localhost:8000/leads/${selectedLeadId}/outreach/approve`,
+      const res = await apiFetch(
+        `/leads/${selectedLeadId}/outreach/approve`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -269,12 +270,10 @@ export default function PipelinePage() {
         await fetchLeads();
         setSelectedLeadId(null);
       } else {
-        showToast("Failed to approve draft.");
+        showToast(await apiErrorMessage(res, "Failed to approve draft."), "error");
       }
     } catch {
-      showToast("Approved. Outreach is queued to send.");
-      await fetchLeads();
-      setSelectedLeadId(null);
+      showToast("Couldn't reach the API. The draft was not approved.", "error");
     } finally {
       setSavingOutreach(false);
     }
@@ -284,16 +283,19 @@ export default function PipelinePage() {
     if (!selectedLeadId) return;
     setSavingOutreach(true);
     try {
-      await fetch(`http://localhost:8000/leads/${selectedLeadId}/outreach/reject`, {
+      const res = await apiFetch(`/leads/${selectedLeadId}/outreach/reject`, {
         method: "POST",
       });
-      showToast("Rejected. Draft removed.");
-      trackEvent("lead_rejected", { leadId: selectedLeadId });
-      await fetchLeads();
-      setSelectedLeadId(null);
+      if (res.ok) {
+        showToast("Rejected. Draft removed.");
+        trackEvent("lead_rejected", { leadId: selectedLeadId });
+        await fetchLeads();
+        setSelectedLeadId(null);
+      } else {
+        showToast(await apiErrorMessage(res, "Failed to reject draft."), "error");
+      }
     } catch {
-      showToast("Rejected. Draft removed.");
-      setSelectedLeadId(null);
+      showToast("Couldn't reach the API. The draft was not rejected.", "error");
     } finally {
       setSavingOutreach(false);
     }
@@ -303,11 +305,11 @@ export default function PipelinePage() {
     if (!selectedLeadId) return;
     showToast("Generating research brief...");
     try {
-      await fetch(`http://localhost:8000/leads/${selectedLeadId}/research`, {
+      await apiFetch(`/leads/${selectedLeadId}/research`, {
         method: "POST",
       });
       await fetchLeads();
-      const detRes = await fetch(`http://localhost:8000/leads/${selectedLeadId}`);
+      const detRes = await apiFetch(`/leads/${selectedLeadId}`);
       if (detRes.ok) setDetails(await detRes.json());
       showToast("Research synthesis completed.");
     } catch {
@@ -319,11 +321,11 @@ export default function PipelinePage() {
     if (!selectedLeadId) return;
     showToast("Recomputing ICP score...");
     try {
-      await fetch(`http://localhost:8000/leads/${selectedLeadId}/score`, {
+      await apiFetch(`/leads/${selectedLeadId}/score`, {
         method: "POST",
       });
       await fetchLeads();
-      const detRes = await fetch(`http://localhost:8000/leads/${selectedLeadId}`);
+      const detRes = await apiFetch(`/leads/${selectedLeadId}`);
       if (detRes.ok) setDetails(await detRes.json());
       showToast("Score recomputed.");
     } catch {
@@ -335,11 +337,11 @@ export default function PipelinePage() {
     if (!selectedLeadId) return;
     showToast("Generating outreach draft...");
     try {
-      await fetch(`http://localhost:8000/leads/${selectedLeadId}/draft-outreach`, {
+      await apiFetch(`/leads/${selectedLeadId}/draft-outreach`, {
         method: "POST",
       });
       await fetchLeads();
-      const detRes = await fetch(`http://localhost:8000/leads/${selectedLeadId}`);
+      const detRes = await apiFetch(`/leads/${selectedLeadId}`);
       if (detRes.ok) setDetails(await detRes.json());
       showToast("Outreach drafted.");
     } catch {

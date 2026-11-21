@@ -1,9 +1,10 @@
-import os
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from apps.api.auth.dependencies import any_user
+from apps.api.config import settings
 from apps.api.db.session import get_db
 from apps.api.models.orm.pipeline_error import PipelineError
 
@@ -15,7 +16,7 @@ def health():
     return {"status": "ok"}
 
 
-@router.get("/system-health")
+@router.get("/system-health", dependencies=[Depends(any_user)])
 async def system_health(db: AsyncSession = Depends(get_db)):
     # 1. Test database connection
     try:
@@ -25,7 +26,7 @@ async def system_health(db: AsyncSession = Depends(get_db)):
         db_status = f"error: {exc}"
 
     # 2. Test Gemini API config
-    gemini_configured = bool(os.environ.get("GEMINI_API_KEY"))
+    gemini_configured = bool(settings.GEMINI_API_KEY)
     
     # 3. Get unresolved errors count
     try:

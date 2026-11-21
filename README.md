@@ -56,6 +56,44 @@ Open your browser and navigate to:
 
 You'll see the Lead Pipeline Kanban board, where you can click on any ingested lead to view their AI-generated research dossier, score breakdown, and approve drafted outreach messages.
 
+## Authentication
+
+Every API route except `/health`, `/auth/login` and the signed unsubscribe link needs a signed-in user or the automation key.
+
+**First-time setup**
+
+```bash
+# 1. Apply the auth migration (adds password_hash, is_active, last_login_at to users)
+psql "$DATABASE_URL" -f apps/api/db/migrations/0003_user_auth.sql
+
+# 2. Set secrets in apps/api/.env (see .env.example)
+#    JWT_SECRET is required when ENVIRONMENT is not "development"
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+
+# 3. Create users (the password is prompted for, never passed as an argument)
+python -m apps.api.scripts.create_user --email you@agency.com --role admin --name "Your Name"
+```
+
+There are no default accounts. Running the same command for an existing email resets its password.
+
+**Roles**
+
+| Role | Can do |
+|---|---|
+| `admin` | Everything, including the POC endpoint |
+| `ae` | View leads, run research/score/draft, **approve or reject outreach** |
+| `ops` | View leads, ingest, run research/score/draft. Cannot approve outreach |
+| Service key (`X-API-Key: $SERVICE_API_KEY`) | Ingest, research, score, draft (for n8n). Cannot approve outreach or read the dashboard API |
+
+**How it works**
+
+- `POST /auth/login` returns a JWT access token (HS256, `JWT_EXPIRE_MINUTES`, default 8 hours). Passwords are hashed with scrypt. Failed logins are throttled to 5 per email and IP per 15 minutes.
+- Every request re-reads the user, so disabling an account (`is_active = false`) or changing a role takes effect at once.
+- Users only see leads from their own organisation.
+- Approvals record the real approver (`outreach_messages.approved_by` and `activity_log.actor`).
+- Each outreach email gets a postal address and a signed unsubscribe link (`/webhooks/unsubscribe?email=…&token=…`). The token only works for the address it was issued for, so nobody can unsubscribe other people. Email providers can call the same webhook with the service key instead.
+- The dashboard keeps the token in `sessionStorage` (per tab, cleared when the tab closes) and signs out on any 401. Moving to an httpOnly cookie needs the API and dashboard served from the same site.
+
 ## Run tests
 
 ```bash

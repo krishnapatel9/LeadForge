@@ -6,9 +6,9 @@ tagging live centrally.
 
 import json
 import logging
-import os
 from pathlib import Path
 
+from apps.api.config import settings
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
@@ -16,9 +16,21 @@ from google.genai import types as genai_types
 logger = logging.getLogger("leadforge.ai_client")
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
-MODEL = os.environ.get("LEADFORGE_MODEL", "gemini-2.5-flash")
+MODEL = settings.LEADFORGE_MODEL
 
-_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+_client: genai.Client | None = None
+
+
+def _get_client() -> genai.Client:
+    """Created on first use, from settings (which reads .env). Building it at import
+    time crashed the whole API when no key was set, and os.environ ignored keys
+    that were only in .env."""
+    global _client
+    if _client is None:
+        if not settings.GEMINI_API_KEY:
+            raise RuntimeError("GEMINI_API_KEY is not set; AI research and drafting are unavailable.")
+        _client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    return _client
 
 
 def _load_prompt(name: str) -> str:
@@ -50,7 +62,7 @@ def call_structured(prompt_name: str, template_vars: dict, max_retries: int = 3)
     last_error: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
-            response = _client.models.generate_content(
+            response = _get_client().models.generate_content(
                 model=MODEL,
                 contents=user_message,
                 config=genai_types.GenerateContentConfig(

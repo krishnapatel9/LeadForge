@@ -1,4 +1,8 @@
+from urllib.parse import urlencode
+
 from sqlalchemy.ext.asyncio import AsyncSession
+from apps.api.auth.security import unsubscribe_token
+from apps.api.config import settings
 from sqlalchemy.future import select
 from apps.api.clients.ai_client import call_structured
 from apps.api.models.schemas import LeadInput, OutreachDraft, ResearchBrief as SchemaResearchBrief
@@ -9,6 +13,21 @@ from apps.api.models.orm.outreach_message import OutreachMessage as ORMOutreachM
 from apps.api.services.activity_service import log_activity
 
 PROMPT_VERSION = "outreach_draft_v1"
+
+
+def unsubscribe_url(email: str) -> str:
+    """Signed one-click opt-out link for this recipient (only works for this address)."""
+    query = urlencode({"email": email, "token": unsubscribe_token(email)})
+    return f"{settings.PUBLIC_API_URL.rstrip('/')}/webhooks/unsubscribe?{query}"
+
+
+def with_compliance_footer(body: str, email: str) -> str:
+    """CAN-SPAM: every commercial email carries an opt-out link and a postal address."""
+    return (
+        f"{body.rstrip()}\n\n--\n"
+        f"{settings.AGENCY_POSTAL_ADDRESS}\n"
+        f"Don't want these emails? Unsubscribe: {unsubscribe_url(email)}\n"
+    )
 
 # TODO: move to config/env once this needs to vary per agency/campaign.
 AGENCY_CONTEXT = (

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from apps.api.auth.dependencies import Principal, ensure_same_org, pipeline_caller
 from apps.api.db.session import get_db
 from apps.api.models.orm.lead import Lead
 from apps.api.models.orm.company import Company
@@ -14,7 +15,11 @@ router = APIRouter(prefix="/leads", tags=["scoring"])
 
 
 @router.post("/{lead_id}/score", response_model=ScoreBreakdown)
-async def score_lead_endpoint(lead_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def score_lead_endpoint(
+    lead_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(pipeline_caller),
+):
     # 1. Fetch Lead
     lead_stmt = select(Lead).where(Lead.id == lead_id)
     lead_res = await db.execute(lead_stmt)
@@ -24,6 +29,7 @@ async def score_lead_endpoint(lead_id: uuid.UUID, db: AsyncSession = Depends(get
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Lead with id {lead_id} not found",
         )
+    ensure_same_org(principal, lead.org_id)
 
     # 2. Fetch Company
     company_stmt = select(Company).where(Company.id == lead.company_id)
