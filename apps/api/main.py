@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,10 +18,24 @@ from apps.api.routers import (
     campaigns_router,
     reports_router,
 )
+from apps.api.services.bootstrap import ensure_bootstrap_admin
 
 logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("leadforge.main")
 
-app = FastAPI(title="LeadForge API", version="0.2.0-mvp")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Create the first admin if BOOTSTRAP_ADMIN_* is set. A database problem here
+    # must not stop the API from starting (/health still has to answer).
+    try:
+        await ensure_bootstrap_admin()
+    except Exception as exc:  # noqa: BLE001
+        log.error("Bootstrap admin check failed: %s", exc)
+    yield
+
+
+app = FastAPI(title="LeadForge API", version="0.2.0-mvp", lifespan=lifespan)
 
 # Only the configured dashboard origins may call the API from a browser.
 # A wildcard combined with credentials let any website drive it. Set

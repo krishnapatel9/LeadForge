@@ -73,9 +73,13 @@ uvicorn apps.api.main:app --reload --port 8000
 Open **http://localhost:3001** and sign in (see below). Set `NEXT_PUBLIC_API_BASE` to the API's URL
 when the API isn't on `http://localhost:8000`.
 
-**Vercel:** set the project's Root Directory to `apps/dashboard` (it uses `apps/dashboard/vercel.json`)
-and set `NEXT_PUBLIC_API_BASE` and `NEXT_PUBLIC_SITE_URL` in the project's environment variables.
-Add the dashboard's URL to the API's `CORS_ORIGINS`.
+### 5. Hosting (free)
+
+See **[DEPLOY.md](DEPLOY.md)**: the dashboard on Vercel (Root Directory `apps/dashboard`), the API on
+Render's free plan (`render.yaml`), Postgres on Neon, and a Cloudflare cron Worker
+(`infrastructure/cloudflare/keepalive`) that pings the API every 10 minutes so it doesn't sleep.
+The API applies new migrations on every start (`python -m apps.api.scripts.migrate`), and
+`BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` create the first login on a fresh database.
 
 ## Authentication
 

@@ -2,7 +2,7 @@
 
 import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { API_BASE } from "../../lib/site";
+import { apiFetch } from "../../lib/api";
 import { getSession, safeNextPath, setSession } from "../../lib/auth";
 
 function LoginForm() {
@@ -25,7 +25,8 @@ function LoginForm() {
     setError(null);
     setSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
+      // apiFetch waits for a sleeping API to start instead of failing at once
+      const res = await apiFetch("/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),

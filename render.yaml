@@ -1,0 +1,45 @@
+# Render Blueprint: Dashboard → New → Blueprint → pick this repo. See DEPLOY.md.
+# Free setup: the API on Render (plain Python, no Docker), the database on Neon,
+# the dashboard on Vercel, and a Cloudflare Worker
+# (infrastructure/cloudflare/keepalive) that keeps this service from sleeping.
+services:
+  - type: web
+    name: leadforge-api
+    runtime: python
+    plan: free
+    # The code imports itself as `apps.api`, so it runs from the repo root.
+    buildCommand: pip install -r apps/api/requirements.txt
+    # Apply any new SQL migrations, then start the API.
+    startCommand: python -m apps.api.scripts.migrate && uvicorn apps.api.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
+    healthCheckPath: /health
+    # Only redeploy when the API changes, not on dashboard-only pushes.
+    buildFilter:
+      paths:
+        - apps/api/**
+        - render.yaml
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: ENVIRONMENT
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SERVICE_API_KEY
+        generateValue: true
+      - key: LEADFORGE_MODEL
+        value: gemini-2.5-flash
+      # Set these in the dashboard when Render asks (see DEPLOY.md):
+      - key: DATABASE_URL            # Neon connection string, any spelling
+        sync: false
+      - key: CORS_ORIGINS            # the dashboard URL, e.g. https://lead-forge-u97p.vercel.app
+        sync: false
+      - key: PUBLIC_API_URL          # this service's URL, e.g. https://leadforge-api.onrender.com
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: AGENCY_POSTAL_ADDRESS   # printed in every outreach email (CAN-SPAM)
+        sync: false
+      - key: BOOTSTRAP_ADMIN_EMAIL   # first admin login, created on start if missing
+        sync: false
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false

@@ -1,0 +1,11 @@
+name = "leadforge-keepalive"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+# Every 10 minutes: Render sleeps a free service after 15 minutes without traffic.
+[triggers]
+crons = ["*/10 * * * *"]
+
+[vars]
+# Your Render API URL, no trailing slash. Set it after step 2 of DEPLOY.md.
+BACKEND_URL = "https://leadforge-api.onrender.com"

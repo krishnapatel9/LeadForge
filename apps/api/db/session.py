@@ -1,7 +1,9 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from apps.api.config import settings
 
-engine = create_async_engine(settings.DATABASE_URL, future=True, echo=False)
+# pool_pre_ping: Neon closes idle connections when the database sleeps, so check
+# a pooled connection before using it instead of failing the first request.
+engine = create_async_engine(settings.async_database_url, future=True, echo=False, pool_pre_ping=True)
 SessionLocal = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,

@@ -3,6 +3,7 @@ import "./globals.css";
 import Header from "./components/Header";
 import AuthGate from "./components/AuthGate";
 import CookieConsent from "./components/CookieConsent";
+import ServerWakeBanner from "./components/ServerWakeBanner";
 import { ToastProvider } from "./components/Toast";
 import { SITE } from "../lib/site";
 
@@ -47,6 +48,8 @@ export default function RootLayout({
           <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:p-2 focus:bg-black focus:text-white">
             Skip to main content
           </a>
+
+          <ServerWakeBanner />
 
           <AuthGate>
             {/* Prototype Top Navigation Header */}
