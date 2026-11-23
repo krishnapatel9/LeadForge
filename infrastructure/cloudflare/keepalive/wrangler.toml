@@ -1,6 +1,9 @@
 name = "leadforge-keepalive"
 main = "src/index.js"
 compatibility_date = "2025-06-01"
+# Cloudflare account to deploy to (an identifier, not a secret). Without it,
+# `npx wrangler deploy` can fail with "Failed to automatically retrieve account IDs".
+account_id = "e2f7d218d95793f5462a020eb69e773d"
 
 # Every 10 minutes: Render sleeps a free service after 15 minutes without traffic.
 [triggers]
