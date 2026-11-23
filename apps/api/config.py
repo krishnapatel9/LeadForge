@@ -39,7 +39,8 @@ def normalize_database_url(url: str) -> str:
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "postgresql+asyncpg://leadforge:password123@localhost:5435/leadforge"
+    # Local default; set DATABASE_URL (any spelling, e.g. Neon's string) everywhere else
+    DATABASE_URL: str = "postgresql+asyncpg://leadforge:password@localhost:5432/leadforge"
     GEMINI_API_KEY: str = ""
     APOLLO_API_KEY: str = ""
     CLAY_API_KEY: str = ""

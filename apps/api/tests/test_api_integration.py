@@ -1,3 +1,12 @@
+"""End-to-end pipeline test against a real Postgres.
+
+It writes test leads, users and campaigns into whatever DATABASE_URL points at,
+so it only runs when asked: set RUN_DB_TESTS=1 and point DATABASE_URL at a
+throwaway database (never the live Neon one), after running the migrations.
+"""
+
+import os
+
 import pytest
 import httpx
 from unittest.mock import patch
@@ -22,6 +31,12 @@ async def _create_test_user(role: str) -> tuple[str, str]:
                     password_hash=hash_password(password), is_active=True))
         await db.commit()
     return email, password
+
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("RUN_DB_TESTS") != "1",
+    reason="writes to the database; set RUN_DB_TESTS=1 with DATABASE_URL pointing at a test database",
+)
 
 
 @pytest.fixture
