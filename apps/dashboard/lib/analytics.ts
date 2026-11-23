@@ -13,7 +13,8 @@ type AnalyticsEvent =
   | "search_query"
   | "connection_tested"
   | "cookie_consent_updated"
-  | "faq_searched";
+  | "faq_searched"
+  | "page_view";
 
 interface EventPayload {
   [key: string]: string | number | boolean | undefined;
@@ -65,7 +66,7 @@ export function trackEvent(eventName: AnalyticsEvent, payload?: EventPayload): v
 export function trackPageView(url: string): void {
   try {
     if (typeof window === "undefined") return;
-    trackEvent("search_query", { page: url });
+    trackEvent("page_view", { page: url });
   } catch (err) {
     console.debug("Pageview tracking error:", err);
   }

@@ -22,7 +22,7 @@ FIELDNAMES = [
 
 def append_result(result: LeadResult) -> None:
     is_new_file = not OUTPUT_PATH.exists()
-    with OUTPUT_PATH.open("a", newline="") as f:
+    with OUTPUT_PATH.open("a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
         if is_new_file:
             writer.writeheader()

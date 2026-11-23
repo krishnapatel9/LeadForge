@@ -11,6 +11,7 @@ from apps.api.models.orm.company import Company
 from apps.api.models.orm.lead import Lead
 from apps.api.models.orm.enrichment import EnrichmentData
 from apps.api.models.orm.lead_score import LeadScore
+from apps.api.services.score_queries import latest_score_subquery
 from apps.api.models.orm.research_brief import ResearchBrief
 from apps.api.models.orm.outreach_message import OutreachMessage
 from apps.api.models.schemas import (
@@ -23,9 +24,11 @@ from apps.api.models.schemas import (
     ResearchBrief as ResearchBriefSchema,
     ScoreBreakdown,
     OutreachMessageOut,
+    EnrichmentOut,
 )
 from apps.api.services.dedupe_service import check_company_duplicate, check_lead_duplicate
 from apps.api.services.activity_service import log_activity
+from apps.api.services.lead_state import allowed_actions
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
@@ -38,24 +41,35 @@ RESEARCHABLE_STAGES = {"new", "enriched", "researched", "scored", "outreach_draf
     "/ingest",
     response_model=IngestionResult,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(ingest_caller)],
 )
-async def ingest_lead(lead_in: LeadInput, db: AsyncSession = Depends(get_db)):
-    # 1. Fetch the default organization
-    org_result = await db.execute(select(Organization).limit(1))
-    org = org_result.scalars().first()
-    if not org:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="No organization seeded. Ensure database initialization is complete.",
-        )
-    org_id = org.id
+async def ingest_lead(
+    lead_in: LeadInput,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal | None = Depends(ingest_caller),
+):
+    # 1. Resolve the organisation: a signed-in user ingests into their own org;
+    #    the automation key (which has no user) uses the default org.
+    org_id = getattr(principal, "org_id", None)
+    if org_id is None:
+        org_result = await db.execute(select(Organization).limit(1))
+        org = org_result.scalars().first()
+        if not org:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="No organization seeded. Ensure database initialization is complete.",
+            )
+        org_id = org.id
 
     # 2. Check for duplicate lead
     is_dup, existing_lead, existing_enrichment = await check_lead_duplicate(db, lead_in.email)
 
     # An opted-out contact is never re-activated by a new ingest (CAN-SPAM):
     # skip it entirely so no field, stage or flag is touched.
+    # Emails are unique across the whole database, so a lead owned by another
+    # organisation can't be created or refreshed from here.
+    if existing_lead and getattr(existing_lead, "org_id", org_id) != org_id:
+        return IngestionResult(status="skipped", reason="exists_in_other_org", lead_id=existing_lead.id)
+
     if existing_lead and existing_lead.do_not_contact:
         return IngestionResult(
             status="skipped",
@@ -87,8 +101,9 @@ async def ingest_lead(lead_in: LeadInput, db: AsyncSession = Depends(get_db)):
         )
         db.add(company)
         await db.flush()  # gets company.id
-    elif not is_comp_dup:
-        # Stale company, update firmographics
+    elif not is_comp_dup and getattr(company, "org_id", org_id) == org_id:
+        # Stale company, update firmographics and move the refresh time
+        company.enriched_at = func.now()
         company.name = lead_in.company_name
         company.industry = lead_in.industry
         company.employee_count = lead_in.employee_count
@@ -169,9 +184,12 @@ async def list_leads(
     db: AsyncSession = Depends(get_db),
     principal: Principal = Depends(any_user),
 ):
+    # Latest score per lead in one query (was one extra query per lead)
+    latest_score = latest_score_subquery()
     stmt = (
-        select(Lead, Company)
+        select(Lead, Company, latest_score.c.tier, latest_score.c.total_score)
         .join(Company, Lead.company_id == Company.id)
+        .outerjoin(latest_score, latest_score.c.lead_id == Lead.id)
         .where(Lead.org_id == principal.org_id)
     )
     if stage:
@@ -179,36 +197,22 @@ async def list_leads(
     stmt = stmt.order_by(Lead.created_at.desc())
 
     result = await db.execute(stmt)
-    rows = result.all()
-
-    leads_list = []
-    for lead, company in rows:
-        # Fetch latest lead score
-        score_stmt = (
-            select(LeadScore)
-            .where(LeadScore.lead_id == lead.id)
-            .order_by(LeadScore.created_at.desc())
-            .limit(1)
+    return [
+        LeadListItem(
+            id=lead.id,
+            full_name=lead.full_name,
+            title=lead.title,
+            email=lead.email,
+            stage=lead.stage,
+            do_not_contact=lead.do_not_contact,
+            company_name=company.name,
+            company_domain=company.domain,
+            created_at=lead.created_at,
+            tier=tier,
+            total_score=total_score,
         )
-        score_result = await db.execute(score_stmt)
-        latest_score = score_result.scalars().first()
-
-        leads_list.append(
-            LeadListItem(
-                id=lead.id,
-                full_name=lead.full_name,
-                title=lead.title,
-                email=lead.email,
-                stage=lead.stage,
-                company_name=company.name,
-                company_domain=company.domain,
-                created_at=lead.created_at,
-                tier=latest_score.tier if latest_score else None,
-                total_score=latest_score.total_score if latest_score else None,
-            )
-        )
-
-    return leads_list
+        for lead, company, tier, total_score in result.all()
+    ]
 
 
 @router.get("/{lead_id}", response_model=LeadDetail)
@@ -258,6 +262,9 @@ async def get_lead_detail(
     outreach_result = await db.execute(outreach_stmt)
     messages = outreach_result.scalars().all()
 
+    enrichment_result = await db.execute(select(EnrichmentData).where(EnrichmentData.lead_id == lead.id))
+    enrichment = enrichment_result.scalars().first()
+
     # Map to schema models
     lead_out = LeadOut(
         id=lead.id,
@@ -294,7 +301,7 @@ async def get_lead_detail(
         research_out = ResearchBriefSchema(
             summary=latest_brief.summary,
             personalization_angles=latest_brief.personalization_angles,
-            insufficient_signal=False,  # We stored it, so we found it
+            insufficient_signal=bool(latest_brief.insufficient_signal),
         )
 
     score_out = None
@@ -326,10 +333,20 @@ async def get_lead_detail(
         for m in messages
     ]
 
+    enrichment_out = None
+    if enrichment:
+        enrichment_out = EnrichmentOut(
+            hiring_signals=enrichment.hiring_signals or [],
+            news_triggers=enrichment.news_triggers or [],
+            enriched_at=enrichment.enriched_at,
+        )
+
     return LeadDetail(
         lead=lead_out,
         company=company_out,
+        enrichment=enrichment_out,
         research=research_out,
         score=score_out,
         outreach=outreach_out,
+        allowed_actions=allowed_actions(lead.stage, lead.do_not_contact),
     )

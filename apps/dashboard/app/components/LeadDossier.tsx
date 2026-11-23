@@ -1,266 +1,279 @@
 "use client";
 
-import React from "react";
-import { X, Mail, Sparkles, Building2, CheckCircle2, XCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useToast } from "./Toast";
+import { useAuth } from "./AuthGate";
+import { ErrorState, LoadingState } from "./States";
+import { apiSend, notifyPipelineChanged, useApi } from "../../lib/useApi";
+import { ACTION_LABELS, SCORE_PARTS, STEPS, stageLabel, stageStep, tierClass, tierLabel } from "../../lib/stages";
+import type { LeadDetail, PipelineAction } from "../../lib/types";
+import { trackEvent } from "../../lib/analytics";
+
+const STEP_PATHS: Record<"research" | "score" | "draft", string> = {
+  research: "research",
+  score: "score",
+  draft: "draft-outreach",
+};
+
+const DONE_MESSAGES: Record<"research" | "score" | "draft", string> = {
+  research: "Research brief ready.",
+  score: "Score updated.",
+  draft: "Outreach drafted. Review it below.",
+};
+
+const dash = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));
 
 export default function LeadDossier({
-  selectedLeadId,
-  details,
-  detailsLoading,
-  setSelectedLeadId,
-  editSubject,
-  setEditSubject,
-  editBody,
-  setEditBody,
-  savingOutreach,
-  handleApprove,
-  handleReject,
-  handleTriggerResearch,
-  handleTriggerScore,
-  handleTriggerDraft,
-}: any) {
-  if (!selectedLeadId) return null;
+  leadId,
+  onClose,
+  onChanged,
+}: {
+  leadId: string | null;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const { showToast } = useToast();
+  const { user } = useAuth();
+  const canDecide = user?.role === "admin" || user?.role === "ae";
+
+  const { data: details, error, loading, reload } = useApi<LeadDetail>(leadId ? `/leads/${leadId}` : null);
+  const [busy, setBusy] = useState<PipelineAction | null>(null);
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+
+  const draft = details?.outreach.find((m) => m.status === "draft") ?? null;
+
+  // Load the editor from the current draft whenever it changes (incl. after re-drafting)
+  useEffect(() => {
+    setSubject(draft?.subject ?? "");
+    setBody(draft?.body ?? "");
+  }, [draft?.id, draft?.subject, draft?.body]);
+
+  useEffect(() => {
+    if (!leadId) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [leadId, onClose]);
+
+  if (!leadId) return null;
+
+  const runStep = async (action: "research" | "score" | "draft") => {
+    setBusy(action);
+    try {
+      await apiSend(`/leads/${leadId}/${STEP_PATHS[action]}`, "POST", undefined, `Couldn't ${action} this lead.`);
+      showToast(DONE_MESSAGES[action]);
+      if (action === "research") trackEvent("lead_researched", { leadId });
+      await reload(true);
+      onChanged();
+      notifyPipelineChanged();
+    } catch (err) {
+      showToast((err as Error).message, "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const decide = async (action: "approve" | "reject") => {
+    if (action === "approve" && (!subject.trim() || !body.trim())) {
+      showToast("Subject and message can't be empty.", "error");
+      return;
+    }
+    setBusy(action);
+    try {
+      const res = await apiSend<{ transport?: string }>(
+        `/leads/${leadId}/outreach/${action}`,
+        "POST",
+        action === "approve" ? { subject, body } : undefined,
+        `Couldn't ${action} the draft.`
+      );
+      if (action === "approve") {
+        showToast(res.transport === "mock" ? "Approved. Email logged (SMTP not configured)." : "Approved and sent.");
+        trackEvent("lead_approved", { leadId });
+      } else {
+        showToast("Rejected. Draft removed.");
+        trackEvent("lead_rejected", { leadId });
+      }
+      await reload(true);
+      onChanged();
+      notifyPipelineChanged();
+    } catch (err) {
+      showToast((err as Error).message, "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const stepActions = (details?.allowed_actions ?? []).filter(
+    (a): a is "research" | "score" | "draft" => a === "research" || a === "score" || a === "draft"
+  );
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-y-0 right-0 w-full sm:w-[580px] bg-[var(--bg)] text-[var(--ink)] border-l border-[var(--line)] shadow-2xl flex flex-col z-50"
-      style={{ top: "env(safe-area-inset-top, 0px)" }}
-    >
-      {/* Header */}
-      <div className="px-6 py-4 border-b border-[var(--line)] flex items-center justify-between bg-[var(--panel)]">
-        <div>
-          <h2 className="text-lg font-extrabold tracking-tight">Lead Intelligence Dossier</h2>
-          <span className="text-xs text-[var(--mute)] font-mono">ID: {selectedLeadId}</span>
+    <>
+      <div className="scrim" onClick={onClose} aria-hidden="true" />
+      <aside className="dossier" role="dialog" aria-modal="true" aria-labelledby="dossier-title">
+        <div className="dossier-head inv">
+          <span>Lead</span>
+          <button className="btn" type="button" onClick={onClose} aria-label="Close">
+            Close
+          </button>
         </div>
-        <button
-          className="btn"
-          style={{ padding: "4px 8px" }}
-          onClick={() => setSelectedLeadId(null)}
-          aria-label="Close dossier"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
 
-      {/* Body */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {detailsLoading ? (
-          <div className="space-y-4 animate-pulse">
-            <div className="h-20 bg-[var(--sel)] rounded" />
-            <div className="h-32 bg-[var(--sel)] rounded" />
-            <div className="h-40 bg-[var(--sel)] rounded" />
-          </div>
-        ) : details ? (
-          <>
-            {/* 1. Prospect Header */}
-            <div className="flex flex-col gap-3">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="text-2xl font-extrabold tracking-tight">{details.lead.full_name}</h3>
-                  <p className="text-sm text-[var(--mute)]">
-                    {details.lead.title} &bull; <strong className="text-[var(--ink)]">{details.company.name}</strong>
-                  </p>
-                </div>
-                {details.score && details.score.tier && (
-                  <span className="tag" style={{ margin: 0 }}>
-                    {details.score.tier.toUpperCase()}
-                  </span>
-                )}
+        <div className="dossier-body">
+          {loading && !details ? (
+            <LoadingState label="Loading lead…" />
+          ) : error && !details ? (
+            <ErrorState message={error} onRetry={() => reload()} />
+          ) : details ? (
+            <>
+              <h2 id="dossier-title">{details.lead.full_name}</h2>
+              <div className="meta">
+                {details.lead.title ? `${details.lead.title} at ` : ""}
+                {details.company.name} · <a className="link" href={`mailto:${details.lead.email}`}>{details.lead.email}</a>
               </div>
 
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <a
-                  href={`mailto:${details.lead.email}`}
-                  className="link flex items-center gap-1.5"
-                  style={{ textDecoration: "none" }}
-                >
-                  <Mail className="w-3.5 h-3.5" />
-                  {details.lead.email}
-                </a>
-              </div>
-
-              {/* Actions */}
-              <div className="flex flex-wrap gap-2 pt-2">
-                {details.lead.stage === "ingested" && (
-                  <button onClick={handleTriggerResearch} className="btn p">
-                    <Sparkles className="w-3.5 h-3.5 mr-1.5" />
-                    Run AI Research
-                  </button>
-                )}
-                {details.lead.stage === "researched" && (
-                  <button onClick={handleTriggerScore} className="btn p">
-                    Compute ICP Score
-                  </button>
-                )}
-                {details.lead.stage === "scored" && (
-                  <button onClick={handleTriggerDraft} className="btn p">
-                    <Sparkles className="w-3.5 h-3.5 mr-1.5" />
-                    Draft Outreach
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* 2. Company Intelligence */}
-            <div className="border-t border-[var(--line)] pt-5 space-y-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--mute)] flex items-center gap-2">
-                <Building2 className="w-3.5 h-3.5" /> Company Intelligence
-              </h4>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="border border-[var(--line)] p-2.5 bg-[var(--panel)]">
-                  <span className="block text-[11px] uppercase text-[var(--mute)] font-semibold">Industry</span>
-                  <span className="text-sm font-semibold">{details.company.industry ?? "Technology"}</span>
-                </div>
-                <div className="border border-[var(--line)] p-2.5 bg-[var(--panel)]">
-                  <span className="block text-[11px] uppercase text-[var(--mute)] font-semibold">Size</span>
-                  <span className="text-sm font-semibold">{details.company.employee_count ?? "150"} emp</span>
-                </div>
-                <div className="border border-[var(--line)] p-2.5 bg-[var(--panel)]">
-                  <span className="block text-[11px] uppercase text-[var(--mute)] font-semibold">Revenue</span>
-                  <span className="text-sm font-semibold">{details.company.revenue_band ?? "$10M - $50M"}</span>
-                </div>
-              </div>
-
-              {details.company.tech_stack && details.company.tech_stack.length > 0 && (
-                <div className="pt-2">
-                  <span className="text-xs font-semibold text-[var(--mute)] block mb-1.5">Tech Stack:</span>
-                  <div className="flex flex-wrap gap-1">
-                    {details.company.tech_stack.map((t: string) => (
-                      <span key={t} className="tag" style={{ margin: 0, fontSize: "11px" }}>
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {details.company.hiring_signals && details.company.hiring_signals.length > 0 && (
-                <div className="pt-2">
-                  <span className="text-xs font-semibold text-[var(--mute)] block mb-1.5">Hiring Signals:</span>
-                  <div className="flex flex-wrap gap-1">
-                    {details.company.hiring_signals.map((h: string) => (
-                      <span key={h} className="tag" style={{ margin: 0, fontSize: "11px", background: "var(--sel)" }}>
-                        {h}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* 3. Deterministic ICP Score */}
-            {details.score && (
-              <div className="border-t border-[var(--line)] pt-5 space-y-3">
-                <div className="flex justify-between items-center">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--mute)]">
-                    Deterministic ICP Score
-                  </h4>
-                  <span className="text-lg font-extrabold">{details.score.total_score} / 100</span>
-                </div>
-
-                <div className="space-y-2 border border-[var(--line)] p-3 bg-[var(--panel)]">
-                  {[
-                    { label: "Fit (Firmographics)", val: details.score.fit_score ?? 18, max: 30 },
-                    { label: "Intent (Signals)", val: details.score.intent_score ?? 19, max: 25 },
-                    { label: "Contactability", val: details.score.contactability_score ?? 18, max: 15 },
-                    { label: "Gap Analysis", val: details.score.gap_score ?? 17, max: 20 },
-                    { label: "Engagement", val: details.score.engagement_score ?? 10, max: 10 },
-                  ].map((item) => (
-                    <div key={item.label}>
-                      <div className="flex justify-between text-xs font-semibold text-[var(--mute)] mb-0.5">
-                        <span>{item.label}</span>
-                        <span>{item.val} / {item.max}</span>
-                      </div>
-                      <div className="w-full bg-[var(--sel)] h-1.5 overflow-hidden">
-                        <div
-                          className="bg-[var(--ink)] h-1.5 transition-all"
-                          style={{ width: `${Math.min(100, (item.val / item.max) * 100)}%` }}
-                        />
-                      </div>
+              <div className={`row ${tierClass(details.score?.tier)}`} style={{ border: "1px solid var(--line)" }}>
+                <div className="rail" style={{ gridTemplateColumns: "4px 1fr 90px" }}>
+                  <span className="edge" />
+                  <div>
+                    <div className="stage">
+                      {STEPS.map((_, s) => (
+                        <i key={s} className={s < stageStep(details.lead.stage) ? "on" : ""} />
+                      ))}
                     </div>
+                    <div className="stagel">{stageLabel(details.lead.stage)}</div>
+                  </div>
+                  <div className="score">
+                    {details.score?.total_score ?? "—"}
+                    {details.score && <span className="tag">{tierLabel(details.score.tier)}</span>}
+                  </div>
+                </div>
+              </div>
+
+              {details.lead.do_not_contact && (
+                <p className="notice">This lead opted out. No research, drafts or emails will be made.</p>
+              )}
+
+              {stepActions.length > 0 && (
+                <div className="acts" style={{ borderTop: 0, paddingTop: 16 }}>
+                  {stepActions.map((a, i) => (
+                    <button
+                      key={a}
+                      type="button"
+                      className={`btn${i === 0 ? " p" : ""}`}
+                      disabled={busy !== null}
+                      onClick={() => runStep(a)}
+                    >
+                      {busy === a ? "Working…" : ACTION_LABELS[a]}
+                    </button>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* 4. AI Research Brief */}
-            {details.research && (
-              <div className="border-t border-[var(--line)] pt-5 space-y-3">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--mute)] flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5" /> AI Research Brief
-                </h4>
-                <div className="border border-[var(--line)] p-4 bg-[var(--panel)] space-y-3 text-sm">
-                  <div>
-                    <span className="text-[11px] font-bold uppercase text-[var(--mute)] block mb-1">Summary</span>
-                    <p className="leading-relaxed">{details.research.summary}</p>
-                  </div>
-                  {details.research.personalization_angles && (
-                    <div>
-                      <span className="text-[11px] font-bold uppercase text-[var(--mute)] block mb-1">
-                        Personalization Angles
-                      </span>
-                      <ul className="list-disc pl-4 space-y-1 text-[var(--mute)]">
-                        {details.research.personalization_angles.map((ang: string, idx: number) => (
-                          <li key={idx} className="text-[var(--ink)]">{ang}</li>
-                        ))}
-                      </ul>
-                    </div>
+              <h3>Company</h3>
+              <dl className="facts">
+                <div><dt>Domain</dt><dd>{details.company.domain}</dd></div>
+                <div><dt>Industry</dt><dd>{dash(details.company.industry)}</dd></div>
+                <div><dt>Employees</dt><dd>{dash(details.company.employee_count)}</dd></div>
+                <div><dt>Revenue</dt><dd>{dash(details.company.revenue_band)}</dd></div>
+                <div><dt>Funding</dt><dd>{dash(details.company.funding_stage)}</dd></div>
+                <div><dt>Tech stack</dt><dd>{details.company.tech_stack.length ? details.company.tech_stack.join(", ") : "—"}</dd></div>
+                <div><dt>Hiring</dt><dd>{details.enrichment?.hiring_signals.length ? details.enrichment.hiring_signals.join(", ") : "—"}</dd></div>
+                <div><dt>News</dt><dd>{details.enrichment?.news_triggers.length ? details.enrichment.news_triggers.join(", ") : "—"}</dd></div>
+              </dl>
+
+              {details.score && (
+                <>
+                  <h3>Score {details.score.total_score} / 100</h3>
+                  {SCORE_PARTS.map((p) => {
+                    const v = details.score![p.key];
+                    return (
+                      <div className="fr" key={p.key} style={{ gridTemplateColumns: "150px 1fr", padding: "4px 0" }}>
+                        <div className="co">{p.label}</div>
+                        <div className="meter" aria-label={`${v} of ${p.max}`}>
+                          <span style={{ width: `${Math.min(100, (v / p.max) * 100)}%` }} />
+                          <em>{v} / {p.max}</em>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+
+              {details.research && (
+                <>
+                  <h3>Research brief</h3>
+                  {details.research.insufficient_signal && (
+                    <p className="notice">
+                      The AI found too little to personalise. No draft will be written; review this lead by hand.
+                    </p>
                   )}
-                </div>
-              </div>
-            )}
+                  <p style={{ marginTop: 0 }}>{details.research.summary}</p>
+                  {details.research.personalization_angles.length > 0 && (
+                    <ul className="angles">
+                      {details.research.personalization_angles.map((a, i) => (
+                        <li key={i}>{a}</li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
 
-            {/* 5. Outreach Editor */}
-            {details.outreach && details.outreach.length > 0 && (
-              <div className="border-t border-[var(--line)] pt-5 space-y-3">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--mute)]">Outreach Draft</h4>
-                <div className="border border-[var(--line)] p-4 bg-[var(--panel)] space-y-3">
-                  <div>
-                    <label className="text-xs font-bold text-[var(--mute)] block mb-1">Subject</label>
-                    <input
-                      value={editSubject}
-                      onChange={(e) => setEditSubject(e.target.value)}
-                      className="subj"
-                      placeholder="Subject line..."
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-[var(--mute)] block mb-1">Message Body</label>
-                    <textarea
-                      rows={7}
-                      value={editBody}
-                      onChange={(e) => setEditBody(e.target.value)}
-                      className="w-full text-sm border border-[var(--line)] p-3 bg-[var(--bg)] text-[var(--ink)] focus:outline-none leading-relaxed"
-                    />
-                  </div>
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      onClick={handleApprove}
-                      disabled={savingOutreach}
-                      className="btn p flex-1"
-                    >
-                      <CheckCircle2 className="w-4 h-4 mr-1.5" />
-                      {savingOutreach ? "Authorizing..." : "Approve and queue"}
-                    </button>
-                    <button
-                      onClick={handleReject}
-                      disabled={savingOutreach}
-                      className="btn"
-                    >
-                      <XCircle className="w-4 h-4 mr-1.5" />
-                      Reject
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="empty">Select a prospect to view dossier.</div>
-        )}
-      </div>
-    </div>
+              {draft && (
+                <>
+                  <h3>Draft email</h3>
+                  <input
+                    className="subj"
+                    value={subject}
+                    onChange={(e) => setSubject(e.target.value)}
+                    aria-label="Email subject"
+                  />
+                  <textarea
+                    className="body editor"
+                    rows={9}
+                    value={body}
+                    onChange={(e) => setBody(e.target.value)}
+                    aria-label="Email body"
+                  />
+                  {canDecide ? (
+                    <div className="acts">
+                      <button className="btn p" type="button" disabled={busy !== null} onClick={() => decide("approve")}>
+                        {busy === "approve" ? "Sending…" : "Approve and send"}
+                      </button>
+                      <button className="btn" type="button" disabled={busy !== null} onClick={() => decide("reject")}>
+                        Reject
+                      </button>
+                      <span className="why">An unsubscribe link and postal address are added on send.</span>
+                    </div>
+                  ) : (
+                    <p className="why" style={{ marginLeft: 0 }}>Only AEs and admins can approve or reject drafts.</p>
+                  )}
+                </>
+              )}
+
+              {details.outreach.filter((m) => m.status !== "draft").length > 0 && (
+                <>
+                  <h3>History</h3>
+                  {details.outreach
+                    .filter((m) => m.status !== "draft")
+                    .map((m) => (
+                      <div key={m.id} className="hook">
+                        <div>
+                          <b>{m.subject}</b>
+                          <span className="url">
+                            {m.status === "sent" && m.sent_at
+                              ? `Sent ${new Date(m.sent_at).toLocaleString()}`
+                              : m.status[0].toUpperCase() + m.status.slice(1)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                </>
+              )}
+            </>
+          ) : null}
+        </div>
+      </aside>
+    </>
   );
 }

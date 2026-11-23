@@ -184,6 +184,12 @@ async def test_health_is_public(client_with):
     ("post", f"/leads/{uuid.uuid4()}/outreach/approve"),
     ("post", f"/leads/{uuid.uuid4()}/outreach/reject"),
     ("post", "/poc/process-lead"),
+    ("get", "/outreach/drafts"),
+    ("get", "/campaigns"),
+    ("post", "/campaigns"),
+    ("patch", f"/campaigns/{uuid.uuid4()}"),
+    ("get", "/reports/summary"),
+    ("get", "/reports/export.csv"),
 ])
 async def test_private_routes_require_auth(client_with, method, path):
     async with client_with() as client:

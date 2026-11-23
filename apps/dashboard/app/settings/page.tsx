@@ -2,83 +2,49 @@
 
 import { useState } from "react";
 import { useToast } from "../components/Toast";
+import { ErrorState, LoadingState } from "../components/States";
+import { trackEvent } from "../../lib/analytics";
+import { apiErrorMessage, apiFetch } from "../../lib/api";
+import { useApi } from "../../lib/useApi";
+import type { ServiceStatus, SystemHealth } from "../../lib/types";
 
-interface IntegrationItem {
-  name: string;
-  desc: string;
-  statusText: string;
-  statusType: "ok" | "wm";
-  actionText: string;
-}
+const STATUS_TEXT: Record<ServiceStatus["status"], string> = {
+  ok: "Connected",
+  not_configured: "Not set up",
+  error: "Failing",
+};
 
 export default function IntegrationsPage() {
   const { showToast } = useToast();
+  const { data, error, loading, reload, setData } = useApi<SystemHealth>("/system-health");
   const [testing, setTesting] = useState<string | null>(null);
 
-  const [integrations] = useState<IntegrationItem[]>([
-    {
-      name: "PostgreSQL",
-      desc: "Stores every lead and draft",
-      statusText: "Local sandbox",
-      statusType: "wm",
-      actionText: "Test connection",
-    },
-    {
-      name: "Google Gemini",
-      desc: "Writes research summaries and drafts · gemini-2.5-flash",
-      statusText: "Active",
-      statusType: "ok",
-      actionText: "Test model",
-    },
-    {
-      name: "Apollo",
-      desc: "Finds target companies and verified contacts",
-      statusText: "Connected",
-      statusType: "ok",
-      actionText: "Test sync",
-    },
-    {
-      name: "Clay",
-      desc: "Adds headcount, tech stack and company news",
-      statusText: "Connected",
-      statusType: "ok",
-      actionText: "Test callback",
-    },
-  ]);
-
-  const [webhooks] = useState([
-    {
-      title: "Apollo ingestion",
-      url: "https://leadforge-t1rp.onrender.com/webhooks/apollo",
-    },
-    {
-      title: "Clay enrichment callback",
-      url: "https://leadforge-t1rp.onrender.com/webhooks/clay",
-    },
-  ]);
-
-  const handleTest = async (name: string) => {
+  const test = async (name: string) => {
     setTesting(name);
-    showToast(`${name}: checking…`);
+    trackEvent("connection_tested", { service: name });
     try {
-      // Test against local backend or fallback
-      await new Promise((r) => setTimeout(r, 600));
-      showToast(`${name}: responding normally (200 OK)`);
-    } catch {
-      showToast(`${name}: checked.`);
+      const probe = name === "Google Gemini" ? "?probe=gemini" : "";
+      const res = await apiFetch(`/system-health${probe}`);
+      if (!res.ok) throw new Error(await apiErrorMessage(res, "Check failed."));
+      const fresh = (await res.json()) as SystemHealth;
+      setData(fresh);
+      const svc = fresh.services.find((s) => s.name === name);
+      if (svc) showToast(`${name}: ${svc.detail}`, svc.status === "error" ? "error" : "info");
+    } catch (err) {
+      showToast(err instanceof TypeError ? "Can't reach the LeadForge API." : (err as Error).message, "error");
     } finally {
       setTesting(null);
     }
   };
 
-  const handleCopy = (url: string) => {
+  const copy = (url: string) => {
     try {
       navigator.clipboard.writeText(url).then(
         () => showToast("Address copied"),
-        () => showToast("Copy blocked by browser")
+        () => showToast("Copy blocked by the browser", "error")
       );
     } catch {
-      showToast("Copy blocked by browser");
+      showToast("Copy blocked by the browser", "error");
     }
   };
 
@@ -87,52 +53,57 @@ export default function IntegrationsPage() {
       <h1>Integrations</h1>
       <p className="sub">Check that each connected service is responding.</p>
 
-      {/* Integrations Table */}
-      {integrations.map((x, i) => (
-        <div key={x.name} className={`int ${i % 2 === 1 ? "inv" : ""}`}>
-          <b>{x.name}</b>
-          <span className="d" style={{ color: "var(--mute)" }}>
-            {x.desc}
-          </span>
-          <span className={`st ${x.statusType}`}>
-            <i
-              className={`dot ${x.statusType === "wm" ? "hollow" : ""}`}
-              style={{ background: "currentColor" }}
-            />
-            {x.statusText}
-          </span>
-          <button
-            className="link"
-            onClick={() => handleTest(x.name)}
-            disabled={testing === x.name}
-            type="button"
-          >
-            {testing === x.name ? "Checking…" : x.actionText}
-          </button>
-        </div>
-      ))}
+      {loading && !data ? (
+        <LoadingState label="Checking services…" />
+      ) : error && !data ? (
+        <ErrorState message={error} onRetry={() => reload()} />
+      ) : data ? (
+        <>
+          {data.services.map((x, i) => (
+            <div key={x.name} className={`int${i % 2 ? " inv" : ""}`}>
+              <b>{x.name}</b>
+              <span className="d" style={{ color: "var(--mute)" }}>
+                {x.description}
+                <br />
+                <small>{x.detail}</small>
+              </span>
+              <span className={`st ${x.status === "ok" ? "ok" : "wm"}`}>
+                <i className={`dot${x.status === "ok" ? "" : " hollow"}`} style={{ background: "currentColor" }} />
+                {STATUS_TEXT[x.status]}
+              </span>
+              <button className="link" type="button" onClick={() => test(x.name)} disabled={testing !== null}>
+                {testing === x.name ? "Checking…" : x.name === "Google Gemini" ? "Test model" : "Check again"}
+              </button>
+            </div>
+          ))}
 
-      {/* Webhook Addresses Section */}
-      <h3>Webhook addresses</h3>
-      <p className="sub" style={{ marginBottom: "8px" }}>
-        Paste these into Apollo and Clay so they can send data here.
-      </p>
+          {data.unresolved_pipeline_errors > 0 && (
+            <p className="notice" style={{ marginTop: 16 }}>
+              {data.unresolved_pipeline_errors} pipeline step
+              {data.unresolved_pipeline_errors === 1 ? " has" : "s have"} failed recently (research, drafting or
+              sending). Details are in the pipeline_errors table and the API log.
+            </p>
+          )}
 
-      {webhooks.map((h, i) => (
-        <div key={h.title} className={`hook ${i % 2 === 1 ? "inv" : ""}`}>
-          <div>
-            <b>{h.title}</b>
-            <span className="url">{h.url}</span>
-          </div>
-          <button
-            className="btn"
-            onClick={() => handleCopy(h.url)}
-            type="button"
-          >
-            Copy address
-          </button>
-        </div>
-      ))}
+          <h3>Webhook addresses</h3>
+          <p className="sub" style={{ marginBottom: 8 }}>
+            Point Apollo, Clay or n8n at these. Each call needs the service key in the X-API-Key header.
+          </p>
+          {data.webhooks.map((h, i) => (
+            <div key={h.url} className={`hook${i % 2 ? " inv" : ""}`}>
+              <div>
+                <b>{h.title}</b>
+                <span className="url">
+                  {h.method} {h.url}
+                </span>
+              </div>
+              <button className="btn" type="button" onClick={() => copy(h.url)}>
+                Copy address
+              </button>
+            </div>
+          ))}
+        </>
+      ) : null}
     </div>
   );
 }

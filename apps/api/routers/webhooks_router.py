@@ -1,16 +1,18 @@
 import logging
 from html import escape
+from urllib.parse import parse_qs
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
-from sqlalchemy import func
+from pydantic import BaseModel, ValidationError
+from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from apps.api.auth.security import service_key_matches, verify_unsubscribe_token
 from apps.api.db.session import get_db
 from apps.api.models.orm.lead import Lead
+from apps.api.models.orm.outreach_message import OutreachMessage
 from apps.api.services.activity_service import log_activity
 from apps.api.services.normalize import normalize_email
 
@@ -44,6 +46,12 @@ async def _unsubscribe(db: AsyncSession, email: str, source: str) -> dict:
             lead.do_not_contact = True
             lead.stage = "unsubscribed"
             db.add(lead)
+            # Pending drafts must never be sent after an opt-out
+            await db.execute(
+                update(OutreachMessage)
+                .where(OutreachMessage.lead_id == lead.id, OutreachMessage.status == "draft")
+                .values(status="rejected")
+            )
             await log_activity(
                 db=db,
                 lead_id=lead.id,
@@ -69,13 +77,38 @@ def _authorise(email: str, token: str | None, api_key: str | None) -> str:
 
 @router.post("/unsubscribe")
 async def unsubscribe_webhook(
-    payload: UnsubscribePayload,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     x_api_key: str | None = Header(default=None),
 ):
-    """One-click unsubscribe (RFC 8058 POST) or provider webhook."""
-    source = _authorise(payload.email, payload.token, x_api_key)
-    return await _unsubscribe(db, payload.email, source)
+    """Accepts three callers:
+    - RFC 8058 one-click: mail clients POST `List-Unsubscribe=One-Click` (form-encoded)
+      to the link from the List-Unsubscribe header, so email and token are in the query.
+    - a JSON body `{"email", "token"}`.
+    - an email provider webhook: JSON `{"email"}` with the service X-API-Key.
+    """
+    email = request.query_params.get("email")
+    token = request.query_params.get("token")
+
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            payload = UnsubscribePayload.model_validate(await request.json())
+        except (ValueError, ValidationError):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Body must be {email, token?}")
+        email, token = payload.email, payload.token or token
+    elif "application/x-www-form-urlencoded" in content_type:
+        # RFC 8058 bodies are just "List-Unsubscribe=One-Click"; email and token
+        # normally come from the query string, but accept them in the body too.
+        form = parse_qs((await request.body()).decode("utf-8", "replace"))
+        email = (form.get("email") or [email])[0]
+        token = (form.get("token") or [token])[0]
+    # Any other body (e.g. multipart one-click) carries nothing we need: use the query.
+
+    if not email:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="email is required")
+    source = _authorise(str(email), token, x_api_key)
+    return await _unsubscribe(db, str(email), source)
 
 
 @router.get("/unsubscribe", response_class=HTMLResponse)

@@ -8,53 +8,74 @@ This repository contains the **fully realized LeadForge Application**, which orc
 
 | Component | Tech Stack | Status |
 |---|---|---|
-| **API Backend** | FastAPI, Python 3.10+, SQLAlchemy (async) | **Completed** - Full CRUD, API endpoints, AI Prompt Engine |
-| **Database** | PostgreSQL 15 | **Completed** - `leadforge` schema fully migrated and active |
-| **Dashboard UI** | Next.js 14, TailwindCSS, Lucide Icons | **Completed** - Kanban Pipeline, Intelligence Dossier, Outreach Approvals |
-| **Orchestration** | Docker Compose | **Completed** - Single command startup |
-| **Automation** | n8n / Apollo / Clay | *Pending integration* |
+| **API Backend** | FastAPI, Python 3.12+, SQLAlchemy (async) | Pipeline (ingest → research → score → draft → approve/send), campaigns, reports, health |
+| **Database** | PostgreSQL 15 | Migrations in `apps/api/db/migrations`, applied automatically on a fresh Docker volume |
+| **Dashboard UI** | Next.js 14 | Implements the monochrome prototype: Pipeline, Approvals, Campaigns, Performance, Integrations, Help |
+| **Orchestration** | Docker Compose | `db`, `api` and `dashboard` services |
+| **Automation** | Apollo / Clay / n8n | Push leads to `POST /leads/ingest` with the service key |
+
+### Lead pipeline
+
+Each lead moves through one state machine (`apps/api/services/lead_state.py`). A step only runs
+from the stages listed below; anything else returns `409`, and an opted-out lead returns `400`.
+
+| Step | Allowed from | Leaves the lead in |
+|---|---|---|
+| Research (`POST /leads/{id}/research`) | new, enriched, researched, scored | researched |
+| Score (`POST /leads/{id}/score`) | researched, scored | scored |
+| Draft (`POST /leads/{id}/draft-outreach`) | scored, outreach_drafted | outreach_drafted |
+| Approve (`POST /leads/{id}/outreach/approve`) | outreach_drafted | outreach_sent (email sent) |
+| Reject (`POST /leads/{id}/outreach/reject`) | outreach_drafted | scored |
+
+If the research brief flags `insufficient_signal`, drafting is refused (`422`). AI or email failures
+return `502` and are recorded in `pipeline_errors` (shown on the Integrations page).
 
 ## Setup & Running the Application
 
-The entire application has been containerized for easy deployment and local testing.
-
-### 1. Environment Configuration
+### 1. Environment
 
 ```bash
-cd apps/api
-cp .env.example .env   
-# Open .env and fill in your GEMINI_API_KEY 
+cp apps/api/.env.example apps/api/.env
+# Fill in GEMINI_API_KEY, JWT_SECRET, SERVICE_API_KEY and (to really send) SMTP_*
 ```
 
-### 2. Start the Stack (Docker)
+Without `SMTP_USERNAME`/`SMTP_PASSWORD`, approved emails are logged by the API instead of sent.
 
-At the root of the repository, run:
+### 2. Start everything with Docker
 
 ```bash
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
-This will launch:
-- `leadforge-db` (Postgres) on port `5435`
-- `leadforge-api` (FastAPI backend) on port `8000` (Wait, if docker-compose runs API? The API is currently run locally, let's update this to reflect reality)
+- `leadforge-db` (Postgres) on port `5435`. On first start it applies every file in `apps/api/db/migrations`.
+- `leadforge-api` (FastAPI) on port `8000`
+- `leadforge-dashboard` (Next.js) on port `3001`
 
-*Note: In the current setup, the Dashboard and DB are in Docker, while the API is run via Uvicorn.*
-
-### 3. Run the Backend (FastAPI)
+Existing database? Apply new migrations by hand, in order, for example:
 
 ```bash
-cd apps/api
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn apps.api.main:app --reload --port 8000 --app-dir ../..
+psql "postgresql://leadforge:password123@localhost:5435/leadforge" -f apps/api/db/migrations/0004_pipeline.sql
 ```
 
-### 4. Access the Dashboard
+### 3. Or run the API locally
 
-Open your browser and navigate to:
-**http://localhost:3001**
+Run from the repo root so `apps.api` imports resolve. Settings come from `apps/api/.env`
+(a `.env` in the current directory, or real environment variables, override it):
 
-You'll see the Lead Pipeline Kanban board, where you can click on any ingested lead to view their AI-generated research dossier, score breakdown, and approve drafted outreach messages.
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r apps/api/requirements.txt
+uvicorn apps.api.main:app --reload --port 8000
+```
+
+### 4. Dashboard
+
+Open **http://localhost:3001** and sign in (see below). Set `NEXT_PUBLIC_API_BASE` to the API's URL
+when the API isn't on `http://localhost:8000`.
+
+**Vercel:** set the project's Root Directory to `apps/dashboard` (it uses `apps/dashboard/vercel.json`)
+and set `NEXT_PUBLIC_API_BASE` and `NEXT_PUBLIC_SITE_URL` in the project's environment variables.
+Add the dashboard's URL to the API's `CORS_ORIGINS`.
 
 ## Authentication
 
@@ -63,8 +84,7 @@ Every API route except `/health`, `/auth/login` and the signed unsubscribe link 
 **First-time setup**
 
 ```bash
-# 1. Apply the auth migration (adds password_hash, is_active, last_login_at to users)
-psql "$DATABASE_URL" -f apps/api/db/migrations/0003_user_auth.sql
+# 1. Migrations are applied automatically on a fresh Docker database (see above)
 
 # 2. Set secrets in apps/api/.env (see .env.example)
 #    JWT_SECRET is required when ENVIRONMENT is not "development"
@@ -80,9 +100,9 @@ There are no default accounts. Running the same command for an existing email re
 
 | Role | Can do |
 |---|---|
-| `admin` | Everything, including the POC endpoint |
+| `admin` | Everything, including the POC endpoint and campaign profiles |
 | `ae` | View leads, run research/score/draft, **approve or reject outreach** |
-| `ops` | View leads, ingest, run research/score/draft. Cannot approve outreach |
+| `ops` | View leads, ingest, run research/score/draft, manage campaign profiles. Cannot approve outreach |
 | Service key (`X-API-Key: $SERVICE_API_KEY`) | Ingest, research, score, draft (for n8n). Cannot approve outreach or read the dashboard API |
 
 **How it works**
@@ -91,7 +111,7 @@ There are no default accounts. Running the same command for an existing email re
 - Every request re-reads the user, so disabling an account (`is_active = false`) or changing a role takes effect at once.
 - Users only see leads from their own organisation.
 - Approvals record the real approver (`outreach_messages.approved_by` and `activity_log.actor`).
-- Each outreach email gets a postal address and a signed unsubscribe link (`/webhooks/unsubscribe?email=…&token=…`). The token only works for the address it was issued for, so nobody can unsubscribe other people. Email providers can call the same webhook with the service key instead.
+- Each outreach email gets a postal address, a signed unsubscribe link (`/webhooks/unsubscribe?email=…&token=…`) and RFC 8058 `List-Unsubscribe` / `List-Unsubscribe-Post` headers, so mail clients' one-click unsubscribe works. The token only works for the address it was issued for, so nobody can unsubscribe other people. Email providers can call the same webhook with the service key instead. Unsubscribing also cancels any pending draft.
 - The dashboard keeps the token in `sessionStorage` (per tab, cleared when the tab closes) and signs out on any 401. Moving to an httpOnly cookie needs the API and dashboard served from the same site.
 
 ## Run tests

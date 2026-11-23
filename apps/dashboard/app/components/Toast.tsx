@@ -36,9 +36,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!toast) return;
+    // Errors stay up long enough to read the API's explanation
     const timer = setTimeout(() => {
       setToast(null);
-    }, 2500);
+    }, toast.type === "error" ? 7000 : 2500);
     return () => clearTimeout(timer);
   }, [toast]);
 

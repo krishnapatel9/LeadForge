@@ -1,19 +1,32 @@
 import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from apps.api.auth.dependencies import Principal, approver, ensure_same_org, pipeline_caller
+from apps.api.auth.dependencies import Principal, any_user, approver, ensure_same_org, pipeline_caller
+from apps.api.clients.email_client import send_email
 from apps.api.db.session import get_db
-from apps.api.models.orm.lead import Lead
 from apps.api.models.orm.company import Company
-from apps.api.models.orm.research_brief import ResearchBrief
+from apps.api.models.orm.lead import Lead
+from apps.api.services.score_queries import latest_score_subquery
 from apps.api.models.orm.outreach_message import OutreachMessage
+from apps.api.models.orm.research_brief import ResearchBrief
 from apps.api.models.schemas import OutreachDraft
-from apps.api.services.outreach_service import draft_outreach_db, with_compliance_footer
+from apps.api.routers._pipeline import fail_step, load_lead_for
 from apps.api.services.activity_service import log_activity
+from apps.api.services.lead_state import advance, require_transition
+from apps.api.services.outreach_service import (
+    InsufficientSignalError,
+    draft_outreach_db,
+    unsubscribe_url,
+    with_compliance_footer,
+)
 
 router = APIRouter(prefix="/leads", tags=["outreach"])
+drafts_router = APIRouter(prefix="/outreach", tags=["outreach"])
 
 
 @router.post("/{lead_id}/draft-outreach", response_model=OutreachDraft)
@@ -22,131 +35,116 @@ async def draft_outreach_endpoint(
     db: AsyncSession = Depends(get_db),
     principal: Principal = Depends(pipeline_caller),
 ):
-    # 1. Fetch Lead
-    lead_stmt = select(Lead).where(Lead.id == lead_id)
-    lead_res = await db.execute(lead_stmt)
-    lead = lead_res.scalars().first()
-    if not lead:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Lead with id {lead_id} not found",
-        )
-    ensure_same_org(principal, lead.org_id)
+    lead, company, _ = await load_lead_for(db, lead_id, principal, "draft")
 
-    # 2. Fetch Company
-    company_stmt = select(Company).where(Company.id == lead.company_id)
-    company_res = await db.execute(company_stmt)
-    company = company_res.scalars().first()
-    if not company:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Company with id {lead.company_id} not found for lead {lead_id}",
+    brief = (
+        await db.execute(
+            select(ResearchBrief)
+            .where(ResearchBrief.lead_id == lead_id)
+            .order_by(ResearchBrief.created_at.desc())
+            .limit(1)
         )
-
-    # 3. Fetch latest Research Brief
-    brief_stmt = (
-        select(ResearchBrief)
-        .where(ResearchBrief.lead_id == lead_id)
-        .order_by(ResearchBrief.created_at.desc())
-        .limit(1)
-    )
-    brief_res = await db.execute(brief_stmt)
-    brief = brief_res.scalars().first()
+    ).scalars().first()
     if not brief:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Research brief must be generated before drafting outreach for lead {lead_id}.",
+            detail="Research brief must be generated before drafting outreach.",
         )
 
-    # 4. Generate outreach draft
     try:
-        draft = await draft_outreach_db(
-            db=db,
-            lead=lead,
-            company=company,
-            research=brief,
-        )
+        draft = await draft_outreach_db(db=db, lead=lead, company=company, research=brief)
         await db.commit()
         return draft
-    except Exception as exc:
+    except InsufficientSignalError as exc:
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate outreach draft: {exc}",
-        )
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except Exception as exc:
+        raise await fail_step(db, "draft", lead_id, exc, "Failed to generate outreach draft")
 
-
-from apps.api.clients.email_client import send_email
-
-from pydantic import BaseModel
 
 class OutreachApprovalPayload(BaseModel):
-    subject: str | None = None
-    body: str | None = None
+    """Edits made in the dashboard. Omitted fields keep the stored draft text;
+    a provided field must not be blank (an empty editor must never send)."""
 
-@router.post("/{lead_id}/outreach/approve")
-async def approve_outreach(
-    lead_id: uuid.UUID,
-    payload: OutreachApprovalPayload = None,
-    db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(approver),
-):
-    lead_stmt = select(Lead).where(Lead.id == lead_id)
-    lead_res = await db.execute(lead_stmt)
-    lead = lead_res.scalars().first()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-    ensure_same_org(principal, lead.org_id)
+    subject: str | None = Field(default=None, max_length=300)
+    body: str | None = Field(default=None, max_length=10000)
 
-    if lead.do_not_contact:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot dispatch outreach. Lead has opted out of communication (Do Not Contact)."
-        )
+    @field_validator("subject", "body")
+    @classmethod
+    def _not_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("must not be empty")
+        return value
 
-    msg_stmt = (
+
+async def _latest_draft(db: AsyncSession, lead_id: uuid.UUID, lock: bool = False) -> OutreachMessage:
+    stmt = (
         select(OutreachMessage)
         .where(OutreachMessage.lead_id == lead_id, OutreachMessage.status == "draft")
         .order_by(OutreachMessage.created_at.desc())
         .limit(1)
-        # Lock the draft so two approvals at once can't both send it
-        .with_for_update()
     )
-    msg_res = await db.execute(msg_stmt)
-    msg = msg_res.scalars().first()
+    if lock:
+        # Lock the draft so two approvals at once can't both send it
+        stmt = stmt.with_for_update()
+    msg = (await db.execute(stmt)).scalars().first()
     if not msg:
         raise HTTPException(status_code=404, detail="No draft outreach message found for this lead.")
+    return msg
 
-    # Override subject/body if edited by user
+
+async def _lead_for_decision(db: AsyncSession, lead_id: uuid.UUID, principal: Principal, action: str) -> Lead:
+    lead = (await db.execute(select(Lead).where(Lead.id == lead_id))).scalars().first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    ensure_same_org(principal, lead.org_id)
+    require_transition(lead, action)
+    return lead
+
+
+@router.post("/{lead_id}/outreach/approve")
+async def approve_outreach(
+    lead_id: uuid.UUID,
+    payload: OutreachApprovalPayload | None = None,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(approver),
+):
+    lead = await _lead_for_decision(db, lead_id, principal, "approve")
+    msg = await _latest_draft(db, lead_id, lock=True)
+
     if payload:
         if payload.subject is not None:
-            msg.subject = payload.subject
+            msg.subject = payload.subject.strip()
         if payload.body is not None:
             msg.body = payload.body
 
-    # Dispatch email via transport client shim. The unsubscribe footer is added at
-    # send time (not stored), so every message carries a valid signed opt-out link.
-    await send_email(to_email=lead.email, subject=msg.subject, body=with_compliance_footer(msg.body, lead.email))
+    # The unsubscribe footer and headers are added at send time (not stored), so
+    # every message carries a valid signed opt-out link.
+    try:
+        transport = await send_email(
+            to_email=lead.email,
+            subject=msg.subject,
+            body=with_compliance_footer(msg.body, lead.email),
+            unsubscribe_url=unsubscribe_url(lead.email),
+        )
+    except Exception as exc:
+        # The draft stays a draft (edits discarded) so it can be retried.
+        raise await fail_step(db, "send", lead_id, exc, "Email could not be sent; the draft was kept")
 
-    msg.status = "approved"
+    msg.status = "sent"
+    msg.sent_at = func.now()
     msg.approved_by = principal.user.id  # the person who actually approved it
-    db.add(msg)
-
-    # Transition the lead stage to 'outreach_sent' (approved & dispatched stage)
-    lead.stage = "outreach_sent"
-    db.add(lead)
+    advance(lead, "approve")
 
     await log_activity(
         db=db,
         lead_id=lead_id,
         actor=principal.actor,
-        action="outreach_approved",
-        detail={"message_id": str(msg.id)},
+        action="outreach_sent",
+        detail={"message_id": str(msg.id), "transport": transport},
     )
     await db.commit()
-    return {"status": "approved", "message_id": str(msg.id)}
-
-
+    return {"status": "sent", "message_id": str(msg.id), "transport": transport}
 
 
 @router.post("/{lead_id}/outreach/reject")
@@ -155,30 +153,12 @@ async def reject_outreach(
     db: AsyncSession = Depends(get_db),
     principal: Principal = Depends(approver),
 ):
-    lead_stmt = select(Lead).where(Lead.id == lead_id)
-    lead_res = await db.execute(lead_stmt)
-    lead = lead_res.scalars().first()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-    ensure_same_org(principal, lead.org_id)
-
-    msg_stmt = (
-        select(OutreachMessage)
-        .where(OutreachMessage.lead_id == lead_id, OutreachMessage.status == "draft")
-        .order_by(OutreachMessage.created_at.desc())
-        .limit(1)
-    )
-    msg_res = await db.execute(msg_stmt)
-    msg = msg_res.scalars().first()
-    if not msg:
-        raise HTTPException(status_code=404, detail="No draft outreach message found for this lead.")
+    lead = await _lead_for_decision(db, lead_id, principal, "reject")
+    msg = await _latest_draft(db, lead_id)
 
     msg.status = "rejected"
-    db.add(msg)
-
-    # When rejected, we transition stage back to 'scored' so it can be regenerated or ignored
-    lead.stage = "scored"
-    db.add(lead)
+    # Back to "scored" so it can be re-drafted or left alone
+    advance(lead, "reject")
 
     await log_activity(
         db=db,
@@ -189,3 +169,41 @@ async def reject_outreach(
     )
     await db.commit()
     return {"status": "rejected", "message_id": str(msg.id)}
+
+
+@drafts_router.get("/drafts")
+async def list_drafts(db: AsyncSession = Depends(get_db), principal: Principal = Depends(any_user)):
+    """Every pending draft in the caller's organisation, for the Approvals queue."""
+    latest_score = latest_score_subquery()
+    rows = (
+        await db.execute(
+            select(Lead, Company, OutreachMessage, latest_score.c.tier, latest_score.c.total_score)
+            .join(Company, Lead.company_id == Company.id)
+            .join(OutreachMessage, OutreachMessage.lead_id == Lead.id)
+            .outerjoin(latest_score, latest_score.c.lead_id == Lead.id)
+            .where(
+                Lead.org_id == principal.org_id,
+                Lead.stage == "outreach_drafted",
+                Lead.do_not_contact.is_(False),
+                OutreachMessage.status == "draft",
+            )
+            .order_by(latest_score.c.total_score.desc().nulls_last(), OutreachMessage.created_at)
+        )
+    ).all()
+    return [
+        {
+            "lead_id": str(lead.id),
+            "message_id": str(msg.id),
+            "full_name": lead.full_name,
+            "title": lead.title,
+            "email": lead.email,
+            "company_name": company.name,
+            "tier": tier,
+            "total_score": total_score,
+            "subject": msg.subject,
+            "body": msg.body,
+            "created_at": msg.created_at,
+        }
+        for lead, company, msg, tier, total_score in rows
+    ]
+

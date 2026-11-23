@@ -1,5 +1,12 @@
+from pathlib import Path
+
 # pyrefly: ignore [missing-import]
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_API_DIR = Path(__file__).resolve().parent
+# apps/api/.env is the documented location. It is found wherever the API is
+# started from; a .env in the current directory still overrides it.
+_ENV_FILES = (_API_DIR / ".env", Path(".env"))
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://leadforge:password123@localhost:5435/leadforge"
@@ -10,6 +17,8 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 587
     SMTP_USERNAME: str = ""
     SMTP_PASSWORD: str = ""
+    # From address for outreach; defaults to SMTP_USERNAME
+    SMTP_FROM: str = ""
     PORT: int = 8000
     HOST: str = "0.0.0.0"
     LEADFORGE_MODEL: str = "gemini-2.5-flash"
@@ -34,7 +43,7 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILES,
         env_file_encoding="utf-8",
         extra="ignore"
     )

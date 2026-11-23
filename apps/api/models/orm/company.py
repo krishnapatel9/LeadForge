@@ -17,3 +17,5 @@ class Company(Base):
     source = Column(String, nullable=False, server_default=text("'apollo'"))
     raw_enrichment = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    # Last firmographic refresh; staleness is measured from this, not created_at
+    enriched_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))

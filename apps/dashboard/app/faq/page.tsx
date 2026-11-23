@@ -4,23 +4,23 @@ export default function FAQPage() {
   const faqs = [
     {
       q: "How is the score worked out?",
-      a: "Each lead gets a score out of 100 from five parts: fit (company profile), intent (buying signals), contactability, gaps in their current setup, and engagement. Data from Apollo and Clay is compared with your campaign targets, with no AI guesswork in the number.",
+      a: "Each lead gets a score out of 100 from five parts: fit (industry and company size), intent (funding and hiring signals), gaps in their current setup, contactability (verified email, LinkedIn), and engagement (a previous email sent). The number comes from fixed rules, with no AI guesswork. 70 and above is Hot, 40 to 69 is Warm, below that is Cool.",
     },
     {
       q: "When does the AI start researching a lead?",
-      a: "Once a lead clears the minimum score from the first firmographic check. The AI then reads the company’s recent news, tech stack and LinkedIn presence.",
+      a: "When someone presses Run AI research on a new lead, or automation (n8n) calls the research step. The AI reads only the firmographics, tech stack, hiring signals and news that Apollo and Clay sent with the lead. If that is too thin to personalise, it says so and no draft is written.",
     },
     {
       q: "Can I change an email before it sends?",
-      a: "Yes. Every AI draft waits in Approvals. Edit it, approve it, and only then is it queued to send.",
+      a: "Yes. Every AI draft waits in Approvals. Edit it, then approve it: only then is it sent, with your agency's postal address and a one-click unsubscribe link added. AEs and admins can approve; ops can't.",
     },
     {
       q: "How does deduplication work?",
-      a: "FastAPI checks company domain and lead email against existing records in PostgreSQL. Records contacted within 90 days are skipped to protect domain reputation and prevent spam.",
+      a: "Ingest matches lead emails and company domains case-insensitively. A lead refreshed in the last 90 days is skipped. An older one has its data refreshed, and goes back to the start of the pipeline only if it hasn't been emailed yet.",
     },
     {
-      q: "What happens when a prospect replies?",
-      a: "Inbound webhook callbacks immediately halt any scheduled automated follow-up steps and advance the lead stage to 'Replied' so an Account Executive can engage directly.",
+      q: "What happens when someone unsubscribes?",
+      a: "The lead is marked Do Not Contact straight away, any pending draft is cancelled, and no step (research, drafting or sending) will run for it again, even if it is ingested again later.",
     },
   ];
 

@@ -1,6 +1,3 @@
-from pydantic import BaseModel, Field
-
-
 import uuid
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
@@ -92,6 +89,7 @@ class LeadListItem(BaseModel):
     title: str | None = None
     email: str
     stage: str
+    do_not_contact: bool = False
     company_name: str
     company_domain: str
     created_at: datetime
@@ -142,10 +140,19 @@ class OutreachMessageOut(BaseModel):
     created_at: datetime
 
 
+class EnrichmentOut(BaseModel):
+    hiring_signals: list[str] = Field(default_factory=list)
+    news_triggers: list[str] = Field(default_factory=list)
+    enriched_at: datetime | None = None
+
+
 class LeadDetail(BaseModel):
     lead: LeadOut
     company: CompanyOut
+    enrichment: EnrichmentOut | None = None
     research: ResearchBrief | None = None
     score: ScoreBreakdown | None = None
     outreach: list[OutreachMessageOut] = Field(default_factory=list)
+    # Pipeline actions the lead's current stage allows (see services/lead_state.py)
+    allowed_actions: list[str] = Field(default_factory=list)
 

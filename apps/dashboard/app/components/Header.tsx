@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiFetch } from "../../lib/api";
+import { PIPELINE_EVENT } from "../../lib/useApi";
 import { useAuth } from "./AuthGate";
 
 const NAV_ITEMS = [
@@ -18,32 +19,33 @@ const NAV_ITEMS = [
 export default function Header() {
   const pathname = usePathname();
   const [approvalCount, setApprovalCount] = useState<number>(0);
-  const [mounted, setMounted] = useState(false);
+  const [health, setHealth] = useState<"ok" | "issues" | "offline" | null>(null);
 
   const { user, signOut } = useAuth();
 
   useEffect(() => {
-    setMounted(true);
     if (!user) {
       setApprovalCount(0);
+      setHealth(null);
       return;
     }
-    async function fetchApprovalCount() {
+    async function poll() {
       try {
-        const res = await apiFetch("/leads");
-        if (res.ok) {
-          const leads = await res.json();
-          const awaiting = leads.filter((l: any) => l.stage === "outreach_drafted");
-          setApprovalCount(awaiting.length);
-        }
-      } catch (err) {
-        // Keep the last known count
+        const [drafts, sys] = await Promise.all([apiFetch("/outreach/drafts"), apiFetch("/system-health")]);
+        if (drafts.ok) setApprovalCount(((await drafts.json()) as unknown[]).length);
+        if (sys.ok) setHealth(((await sys.json()) as { ok: boolean }).ok ? "ok" : "issues");
+        else setHealth("issues");
+      } catch {
+        setHealth("offline");
       }
     }
-
-    fetchApprovalCount();
-    const interval = setInterval(fetchApprovalCount, 8000);
-    return () => clearInterval(interval);
+    poll();
+    const interval = setInterval(poll, 15000);
+    window.addEventListener(PIPELINE_EVENT, poll);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener(PIPELINE_EVENT, poll);
+    };
   }, [user]);
 
   const toggleTheme = () => {
@@ -94,6 +96,12 @@ export default function Header() {
       </nav>
 
       <div className="who">
+        {user && health && (
+          <span className="who-status" title="See Integrations for details">
+            <i className={`dot${health === "ok" ? "" : " hollow"}`} />
+            {health === "ok" ? "All systems running" : health === "offline" ? "API unreachable" : "Issues detected"}
+          </span>
+        )}
         {user ? (
           <>
             <span className="who-user" title={`Signed in as ${user.email} (${user.role})`}>

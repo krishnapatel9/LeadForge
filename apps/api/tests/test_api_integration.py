@@ -134,8 +134,12 @@ async def test_full_lead_pipeline(mock_outreach, mock_research):
 
         # 6. Approve Outreach
         response = await client.post(f"/leads/{lead_id}/outreach/approve")
-        assert response.status_code == 200
-        assert response.json()["status"] == "approved"
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "sent"
+
+        # A sent lead can't be pushed back through the pipeline
+        response = await client.post(f"/leads/{lead_id}/research")
+        assert response.status_code == 409
 
         # 7. Get Lead Details
         response = await client.get(f"/leads/{lead_id}")
@@ -146,7 +150,22 @@ async def test_full_lead_pipeline(mock_outreach, mock_research):
         assert detail["research"]["summary"] == "This company has growth and marketing pains."
         assert detail["score"]["total_score"] == score_breakdown["total_score"]
         assert len(detail["outreach"]) == 1
-        assert detail["outreach"][0]["status"] == "approved"
+        assert detail["outreach"][0]["status"] == "sent"
+        assert detail["outreach"][0]["sent_at"] is not None
+        assert detail["enrichment"]["hiring_signals"] == ["Growth Marketer"]
+        assert detail["allowed_actions"] == []
+
+        # Reports, campaigns and drafts read from the same data
+        response = await client.get("/reports/summary?days=30")
+        assert response.status_code == 200, response.text
+        assert response.json()["funnel"][0]["count"] >= 1
+        response = await client.get("/reports/export.csv")
+        assert response.status_code == 200 and "full_name" in response.text
+        response = await client.post("/campaigns", json={"name": "Integration test", "industry": "SaaS"})
+        assert response.status_code == 201, response.text
+        campaign_id = response.json()["id"]
+        response = await client.patch(f"/campaigns/{campaign_id}", json={"active": False})
+        assert response.status_code == 200 and response.json()["active"] is False
 
         # 8. Test Unsubscribe Webhook & Do Not Contact enforcement
         # Create a second lead to test workflow
@@ -178,6 +197,10 @@ async def test_full_lead_pipeline(mock_outreach, mock_research):
         assert response.status_code == 200
         assert response.json()["status"] == "unsubscribed"
         assert response.json()["updated"] == 1
+
+        # The pending draft was cancelled with the opt-out
+        response = await client.get(f"/leads/{lead2_id}")
+        assert response.json()["outreach"][0]["status"] == "rejected"
 
         # Attempt to approve draft outreach (should fail because of Do Not Contact)
         response = await client.post(f"/leads/{lead2_id}/outreach/approve")

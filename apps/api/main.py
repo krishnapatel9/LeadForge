@@ -14,6 +14,8 @@ from apps.api.routers import (
     outreach_router,
     health_router,
     webhooks_router,
+    campaigns_router,
+    reports_router,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -40,6 +42,9 @@ app.include_router(research_router.router)
 app.include_router(scoring_router.router)
 app.include_router(outreach_router.router)
 app.include_router(health_router.router)
+app.include_router(outreach_router.drafts_router)
 app.include_router(webhooks_router.router)
+app.include_router(campaigns_router.router)
+app.include_router(reports_router.router)
 
 

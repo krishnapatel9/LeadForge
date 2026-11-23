@@ -1,356 +1,226 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useToast } from "../components/Toast";
+import { useAuth } from "../components/AuthGate";
+import { ErrorState, LoadingState } from "../components/States";
 import { trackEvent } from "../../lib/analytics";
-import { apiErrorMessage, apiFetch } from "../../lib/api";
-
-interface LeadDraft {
-  id: string;
-  full_name: string;
-  title: string;
-  company_name: string;
-  tier: string;
-  total_score: number;
-  outreach_id: string;
-  subject: string;
-  body: string;
-}
+import { apiSend, notifyPipelineChanged, useApi } from "../../lib/useApi";
+import type { DraftItem } from "../../lib/types";
 
 export default function NeedsApprovalPage() {
-  const [drafts, setDrafts] = useState<LeadDraft[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedIndex, setSelectedIndex] = useState<number>(0);
-  const [editing, setEditing] = useState(false);
-  const [editSubject, setEditSubject] = useState("");
-  const [editBody, setEditBody] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  const bodyRef = useRef<HTMLDivElement>(null);
+  const { data, error, loading, reload, setData } = useApi<DraftItem[]>("/outreach/drafts");
+  const drafts = data ?? [];
   const { showToast } = useToast();
+  const { user } = useAuth();
+  const canDecide = user?.role === "admin" || user?.role === "ae";
 
-  const fetchDrafts = useCallback(async () => {
-    try {
-      const res = await apiFetch("/leads");
-      if (res.ok) {
-        const leads = await res.json();
-        const draftedLeads = leads.filter(
-          (l: any) => l.stage === "outreach_drafted"
-        );
+  const [sel, setSel] = useState(0);
+  const [editing, setEditing] = useState(false);
+  const [subject, setSubject] = useState("");
+  const [saving, setSaving] = useState(false);
+  // Edited bodies per message, so switching drafts doesn't lose work
+  const edits = useRef<Record<string, string>>({});
+  const bodyRef = useRef<HTMLDivElement>(null);
 
-        const fullDrafts = await Promise.all(
-          draftedLeads.map(async (l: any) => {
-            try {
-              const detRes = await apiFetch(`/leads/${l.id}`);
-              if (detRes.ok) {
-                const det = await detRes.json();
-                const activeMsg = det.outreach?.find((m: any) => m.status === "draft");
-                return {
-                  id: l.id,
-                  full_name: l.full_name,
-                  title: l.title,
-                  company_name: l.company_name,
-                  tier: l.tier ?? "hot",
-                  total_score: l.total_score ?? 85,
-                  outreach_id: activeMsg?.id ?? "",
-                  subject: activeMsg?.subject ?? "Scaling growth at " + l.company_name,
-                  body:
-                    activeMsg?.body ??
-                    `Hi ${l.full_name.split(" ")[0]},\n\nNoticed ${l.company_name} is expanding rapidly. We automate outbound sequencing to help growth leaders like you scale without adding headcount.\n\nWorth a brief chat?`,
-                };
-              }
-            } catch {
-              // Ignore single lead fetch failure
-            }
-            return null;
-          })
-        );
-
-        const validDrafts = fullDrafts.filter(Boolean) as LeadDraft[];
-        if (validDrafts.length > 0) {
-          setDrafts(validDrafts);
-          setSelectedIndex((prev) => Math.min(prev, validDrafts.length - 1));
-          return;
-        }
-      }
-      // Fallback draft matching prototype
-      setDrafts([
-        {
-          id: "1",
-          full_name: "Marcus Cole",
-          title: "Head of Growth",
-          company_name: "Globex",
-          tier: "hot",
-          total_score: 85,
-          outreach_id: "draft-1",
-          subject: "Scaling growth at Globex",
-          body:
-            "Hi Marcus,\n\nNoticed Globex is expanding rapidly. We automate outbound sequencing to help growth leaders like you scale without adding headcount.\n\nWorth a brief chat?",
-        },
-      ]);
-      setSelectedIndex(0);
-    } catch {
-      // Fallback
-      setDrafts([
-        {
-          id: "1",
-          full_name: "Marcus Cole",
-          title: "Head of Growth",
-          company_name: "Globex",
-          tier: "hot",
-          total_score: 85,
-          outreach_id: "draft-1",
-          subject: "Scaling growth at Globex",
-          body:
-            "Hi Marcus,\n\nNoticed Globex is expanding rapidly. We automate outbound sequencing to help growth leaders like you scale without adding headcount.\n\nWorth a brief chat?",
-        },
-      ]);
-      setSelectedIndex(0);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const current = drafts[Math.min(sel, Math.max(drafts.length - 1, 0))];
 
   useEffect(() => {
-    fetchDrafts();
-  }, [fetchDrafts]);
+    if (sel > 0 && sel >= drafts.length) setSel(Math.max(drafts.length - 1, 0));
+  }, [drafts.length, sel]);
 
-  // Sync editor fields when selected draft changes
-  useEffect(() => {
-    if (drafts.length > 0 && drafts[selectedIndex]) {
-      setEditSubject(drafts[selectedIndex].subject);
-      setEditBody(drafts[selectedIndex].body);
-      setEditing(false);
-    }
-  }, [drafts, selectedIndex]);
-
-  const removeCurrentDraft = useCallback(() => {
-    setDrafts((prev) => {
-      const next = [...prev];
-      next.splice(selectedIndex, 1);
-      return next;
-    });
-    setSelectedIndex((prev) => Math.max(0, Math.min(prev, drafts.length - 2)));
+  // The body is a contentEditable div. React must not own its children (that
+  // resets the caret on every keystroke), so its text is written here, once per draft.
+  useLayoutEffect(() => {
+    if (!current) return;
+    setSubject(current.subject);
     setEditing(false);
-  }, [selectedIndex, drafts.length]);
+    if (bodyRef.current) bodyRef.current.innerText = edits.current[current.message_id] ?? current.body;
+  }, [current?.message_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleApprove = useCallback(async () => {
-    if (drafts.length === 0 || !drafts[selectedIndex]) return;
-    const current = drafts[selectedIndex];
+  const currentBody = useCallback(() => bodyRef.current?.innerText ?? current?.body ?? "", [current]);
+
+  const removeCurrent = useCallback(() => {
+    if (!current) return;
+    delete edits.current[current.message_id];
+    setData((prev) => (prev ?? []).filter((d) => d.message_id !== current.message_id));
+    notifyPipelineChanged();
+    setEditing(false);
+  }, [current, setData]);
+
+  const approve = useCallback(async () => {
+    if (!current || saving || !canDecide) return;
+    const body = currentBody();
+    if (!subject.trim() || !body.trim()) {
+      showToast("Subject and message can't be empty.", "error");
+      return;
+    }
     setSaving(true);
-
     try {
-      const updatedBody = editing && bodyRef.current ? bodyRef.current.innerText : editBody;
-      const res = await apiFetch(`/leads/${current.id}/outreach/approve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject: editSubject, body: updatedBody }),
-      });
-
-      if (res.ok) {
-        showToast(`Approved. ${current.full_name} is queued to send.`);
-        trackEvent("lead_approved", { leadId: current.id });
-        removeCurrentDraft();
-      } else {
-        // Keep the draft in the queue: it was not approved
-        showToast(await apiErrorMessage(res, "Failed to approve draft."), "error");
-      }
-    } catch {
-      showToast("Couldn't reach the API. The draft was not approved.", "error");
+      const res = await apiSend<{ transport?: string }>(
+        `/leads/${current.lead_id}/outreach/approve`,
+        "POST",
+        { subject, body },
+        "Failed to approve draft."
+      );
+      showToast(
+        res.transport === "mock"
+          ? `Approved. Email to ${current.full_name} logged (SMTP not configured).`
+          : `Approved. ${current.full_name} has been emailed.`
+      );
+      trackEvent("lead_approved", { leadId: current.lead_id });
+      removeCurrent();
+    } catch (err) {
+      showToast((err as Error).message, "error");
     } finally {
       setSaving(false);
     }
-  }, [drafts, selectedIndex, editing, editSubject, editBody, showToast, removeCurrentDraft]);
+  }, [current, saving, canDecide, subject, showToast, removeCurrent, currentBody]);
 
-  const handleReject = useCallback(async () => {
-    if (drafts.length === 0 || !drafts[selectedIndex]) return;
-    const current = drafts[selectedIndex];
+  const reject = useCallback(async () => {
+    if (!current || saving || !canDecide) return;
     setSaving(true);
-
     try {
-      const res = await apiFetch(`/leads/${current.id}/outreach/reject`, {
-        method: "POST",
-      });
-      if (res.ok) {
-        showToast("Rejected. Draft removed.");
-        trackEvent("lead_rejected", { leadId: current.id });
-        removeCurrentDraft();
-      } else {
-        showToast(await apiErrorMessage(res, "Failed to reject draft."), "error");
-      }
-    } catch {
-      showToast("Couldn't reach the API. The draft was not rejected.", "error");
+      await apiSend(`/leads/${current.lead_id}/outreach/reject`, "POST", undefined, "Failed to reject draft.");
+      showToast("Rejected. Draft removed.");
+      trackEvent("lead_rejected", { leadId: current.lead_id });
+      removeCurrent();
+    } catch (err) {
+      showToast((err as Error).message, "error");
     } finally {
       setSaving(false);
     }
-  }, [drafts, selectedIndex, showToast, removeCurrentDraft]);
+  }, [current, saving, canDecide, showToast, removeCurrent]);
 
-  const handleToggleEdit = useCallback(() => {
-    if (editing && bodyRef.current) {
-      const updatedText = bodyRef.current.innerText;
-      setEditBody(updatedText);
-      setDrafts((prev) => {
-        const copy = [...prev];
-        if (copy[selectedIndex]) {
-          copy[selectedIndex].body = updatedText;
-          copy[selectedIndex].subject = editSubject;
-        }
-        return copy;
-      });
-      showToast("Edits saved.");
+  const toggleEdit = useCallback(() => {
+    if (!current) return;
+    if (editing) {
+      edits.current[current.message_id] = currentBody();
+      setEditing(false);
+    } else {
+      setEditing(true);
+      requestAnimationFrame(() => bodyRef.current?.focus());
     }
-    setEditing((prev) => !prev);
-  }, [editing, selectedIndex, editSubject, showToast]);
+  }, [editing, current, currentBody]);
 
-  // Keyboard shortcut listener for J, K, A, E, R
   useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      // Don't trigger if user is actively typing in an input or contenteditable element
-      const target = e.target as HTMLElement;
-      if (
-        /INPUT|TEXTAREA/.test(target.tagName) ||
-        target.isContentEditable ||
-        e.metaKey ||
-        e.ctrlKey ||
-        drafts.length === 0
-      ) {
-        return;
-      }
-
-      const key = e.key.toLowerCase();
-      if (key === "j" && selectedIndex < drafts.length - 1) {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement;
+      if (/INPUT|TEXTAREA|SELECT/.test(t.tagName) || t.isContentEditable || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!drafts.length || saving) return;
+      const k = e.key.toLowerCase();
+      if (k === "j" && sel < drafts.length - 1) {
         e.preventDefault();
-        setSelectedIndex((i) => i + 1);
-      } else if (key === "k" && selectedIndex > 0) {
+        setSel((i) => i + 1);
+      } else if (k === "k" && sel > 0) {
         e.preventDefault();
-        setSelectedIndex((i) => i - 1);
-      } else if (key === "a") {
+        setSel((i) => i - 1);
+      } else if (k === "a") {
         e.preventDefault();
-        handleApprove();
-      } else if (key === "r") {
+        approve();
+      } else if (k === "r") {
         e.preventDefault();
-        handleReject();
-      } else if (key === "e") {
+        reject();
+      } else if (k === "e") {
         e.preventDefault();
-        handleToggleEdit();
+        toggleEdit();
       }
     }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drafts.length, sel, saving, approve, reject, toggleEdit]);
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [drafts, selectedIndex, handleApprove, handleReject, handleToggleEdit]);
+  const header = (
+    <>
+      <h1>Approvals</h1>
+      <p className="sub">
+        {drafts.length
+          ? "Read each draft, change what you like, then approve it for sending."
+          : "Drafts written by the AI wait here until you approve them."}
+      </p>
+    </>
+  );
 
-  if (!loading && drafts.length === 0) {
+  if (loading && !data) return <div>{header}<LoadingState label="Loading drafts…" /></div>;
+  if (error && !data) return <div>{header}<ErrorState message={error} onRetry={() => reload()} /></div>;
+  if (!current) {
     return (
       <div>
-        <h1>Approvals</h1>
-        <p className="sub">
-          Drafts written by the AI wait here until you approve them.
-        </p>
-        <div className="empty">
-          Nothing to review. New drafts appear here as leads are scored.
-        </div>
+        {header}
+        <div className="empty">Nothing to review. New drafts appear here as leads are scored.</div>
       </div>
     );
   }
 
-  const currentDraft = drafts[selectedIndex] || drafts[0];
-
   return (
     <div>
-      <h1>Approvals</h1>
-      <p className="sub">
-        Read each draft, change what you like, then approve it for sending.
-      </p>
-
-      {currentDraft && (
-        <div className="appr">
-          {/* Left Queue Panel */}
-          <div className="queue inv" role="listbox" aria-label="Awaiting Approvals">
-            {drafts.map((x, i) => (
-              <button
-                key={x.id}
-                className={`qi ${i === selectedIndex ? "active" : ""}`}
-                role="option"
-                aria-selected={i === selectedIndex}
-                onClick={() => {
-                  setSelectedIndex(i);
-                  setEditing(false);
-                }}
-                type="button"
-              >
-                <b>{x.full_name}</b>
-                <small>
-                  {x.title}, {x.company_name}
-                </small>
-                <small>Score {x.total_score}</small>
-              </button>
-            ))}
-          </div>
-
-          {/* Right Letter / Email Editor Panel */}
-          <div className="letter">
-            <h2>{currentDraft.full_name}</h2>
-            <div className="meta">
-              {currentDraft.title} at {currentDraft.company_name}
-            </div>
-
-            <input
-              className="subj"
-              id="subj"
-              value={editSubject}
-              onChange={(e) => setEditSubject(e.target.value)}
-              aria-label="Email Subject"
-            />
-
-            <div
-              className="body"
-              id="body"
-              ref={bodyRef}
-              contentEditable={editing}
-              suppressContentEditableWarning
-              onBlur={(e) => {
-                if (editing) setEditBody(e.currentTarget.innerText);
+      {header}
+      <div className="appr">
+        <div className="queue inv" role="listbox" aria-label="Drafts awaiting approval">
+          {drafts.map((x, i) => (
+            <button
+              key={x.message_id}
+              className="qi"
+              role="option"
+              aria-selected={x.message_id === current.message_id}
+              onClick={() => {
+                if (editing) edits.current[current.message_id] = currentBody();
+                setSel(i);
               }}
+              type="button"
             >
-              {editBody}
-            </div>
+              <b>{x.full_name}</b>
+              <small>
+                {x.title ? `${x.title}, ` : ""}
+                {x.company_name}
+              </small>
+              <small>{x.total_score === null ? "Not scored" : `Score ${x.total_score}`}</small>
+            </button>
+          ))}
+        </div>
 
-            <div className="acts">
-              <button
-                className="btn p"
-                onClick={handleApprove}
-                disabled={saving}
-                type="button"
-              >
-                Approve and queue
-                <kbd>A</kbd>
-              </button>
-
-              <button
-                className="btn"
-                onClick={handleToggleEdit}
-                type="button"
-              >
-                {editing ? "Done editing" : "Edit"}
-                <kbd>E</kbd>
-              </button>
-
-              <button
-                className="btn"
-                onClick={handleReject}
-                disabled={saving}
-                type="button"
-              >
-                Reject
-                <kbd>R</kbd>
-              </button>
-
-              <span className="why">J / K to switch drafts</span>
-            </div>
+        <div className="letter">
+          <h2>{current.full_name}</h2>
+          <div className="meta">
+            {current.title ? `${current.title} at ` : ""}
+            {current.company_name}
+          </div>
+          <input
+            className="subj"
+            id="subj"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            aria-label="Subject"
+          />
+          <div
+            className="body"
+            id="body"
+            ref={bodyRef}
+            contentEditable={editing}
+            suppressContentEditableWarning
+            aria-label="Email body"
+            aria-multiline="true"
+            role="textbox"
+          />
+          <div className="acts">
+            <button className="btn p" type="button" onClick={approve} disabled={saving || !canDecide}>
+              {saving ? "Sending…" : "Approve and queue"}
+              <kbd>A</kbd>
+            </button>
+            <button className="btn" type="button" onClick={toggleEdit} disabled={saving}>
+              {editing ? "Done editing" : "Edit"}
+              <kbd>E</kbd>
+            </button>
+            <button className="btn" type="button" onClick={reject} disabled={saving || !canDecide}>
+              Reject
+              <kbd>R</kbd>
+            </button>
+            <span className="why">
+              {canDecide ? "J / K to switch drafts" : "Only AEs and admins can approve or reject"}
+            </span>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

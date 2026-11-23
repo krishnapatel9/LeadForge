@@ -24,15 +24,21 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   return res;
 }
 
-/** A user-facing message for a failed response. */
+/** A user-facing message for a failed response. Prefers the API's own `detail`. */
 export async function apiErrorMessage(res: Response, fallback = "Request failed."): Promise<string> {
-  if (res.status === 403) return "Your role can't do this. Only AEs and admins can approve or reject outreach.";
   if (res.status === 401) return "Your session ended. Sign in again.";
   try {
     const data = await res.json();
     if (typeof data?.detail === "string") return data.detail;
+    // FastAPI validation errors: [{loc, msg}, ...]
+    if (Array.isArray(data?.detail) && data.detail[0]?.msg) {
+      const first = data.detail[0];
+      const field = Array.isArray(first.loc) ? first.loc[first.loc.length - 1] : "";
+      return field ? `${field}: ${first.msg}` : first.msg;
+    }
   } catch {
     // not JSON
   }
+  if (res.status === 403) return "Your role can't do this.";
   return fallback;
 }

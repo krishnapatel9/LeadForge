@@ -8,6 +8,7 @@ from apps.api.models.orm.enrichment import EnrichmentData as ORMEnrichmentData
 from apps.api.models.orm.lead_score import LeadScore as ORMLeadScore
 from apps.api.models.orm.outreach_message import OutreachMessage as ORMOutreachMessage
 from apps.api.services.activity_service import log_activity
+from apps.api.services.lead_state import advance
 
 ICP_INDUSTRIES = {"saas", "software", "e-commerce", "dtc", "ecommerce"}
 ICP_EMPLOYEE_RANGE = (20, 200)
@@ -124,9 +125,7 @@ async def score_lead_db(
     )
     db.add(score_orm)
     
-    # Commit changes on lead stage (new or researched -> scored)
-    lead.stage = "scored"
-    db.add(lead)
+    advance(lead, "score")
     
     # Log Activity
     await log_activity(

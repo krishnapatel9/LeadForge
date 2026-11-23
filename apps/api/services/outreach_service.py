@@ -3,7 +3,7 @@ from urllib.parse import urlencode
 from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.auth.security import unsubscribe_token
 from apps.api.config import settings
-from sqlalchemy.future import select
+from sqlalchemy import update
 from apps.api.clients.ai_client import call_structured
 from apps.api.models.schemas import LeadInput, OutreachDraft, ResearchBrief as SchemaResearchBrief
 from apps.api.models.orm.lead import Lead as ORMLead
@@ -11,6 +11,7 @@ from apps.api.models.orm.company import Company as ORMCompany
 from apps.api.models.orm.research_brief import ResearchBrief as ORMResearchBrief
 from apps.api.models.orm.outreach_message import OutreachMessage as ORMOutreachMessage
 from apps.api.services.activity_service import log_activity
+from apps.api.services.lead_state import advance
 
 PROMPT_VERSION = "outreach_draft_v1"
 
@@ -36,24 +37,39 @@ AGENCY_CONTEXT = (
 )
 
 
-def draft_outreach(lead: LeadInput, research: SchemaResearchBrief) -> OutreachDraft:
-    """Synchronous version compatible with Phase 1 POC logic and tests."""
+class InsufficientSignalError(ValueError):
+    """The research brief said there isn't enough to personalise; a human must review."""
+
+
+def _angles(value) -> str:
+    return "; ".join(value) if isinstance(value, list) else str(value or "")
+
+
+def build_outreach_vars(*, full_name, title, company_name, summary, angles) -> dict:
+    """The prompt variables, shared by the database pipeline and the POC dry run."""
+    return {
+        "agency_context": AGENCY_CONTEXT,
+        "full_name": full_name,
+        "title": title or "unknown",
+        "company_name": company_name,
+        "research_summary": summary,
+        "personalization_angles": _angles(angles),
+    }
+
+
+async def draft_outreach(lead: LeadInput, research: SchemaResearchBrief) -> OutreachDraft:
+    """Draft for a raw payload, without touching the database (POC dry run)."""
     if research.insufficient_signal:
-        raise ValueError(
+        raise InsufficientSignalError(
             f"Refusing to draft outreach for {lead.email}: research brief "
             "flagged insufficient_signal — needs human review, not a generic draft."
         )
-
-    raw = call_structured(
+    raw = await call_structured(
         PROMPT_VERSION,
-        {
-            "agency_context": AGENCY_CONTEXT,
-            "full_name": lead.full_name,
-            "title": lead.title,
-            "company_name": lead.company_name,
-            "research_summary": research.summary,
-            "personalization_angles": "; ".join(research.personalization_angles),
-        },
+        build_outreach_vars(
+            full_name=lead.full_name, title=lead.title, company_name=lead.company_name,
+            summary=research.summary, angles=research.personalization_angles,
+        ),
     )
     return OutreachDraft(**raw)
 
@@ -62,46 +78,46 @@ async def draft_outreach_db(
     db: AsyncSession,
     lead: ORMLead,
     company: ORMCompany,
-    research: ORMResearchBrief
+    research: ORMResearchBrief,
 ) -> OutreachDraft:
-    """Asynchronous version that queries and writes to PostgreSQL database (Phase 2)."""
-    raw = call_structured(
+    """Drafts, persists the message as a draft, advances the lead and logs it.
+    The caller has already checked the transition (services/lead_state.py)."""
+    if getattr(research, "insufficient_signal", False):
+        raise InsufficientSignalError(
+            "The research brief flagged insufficient signal for this lead. "
+            "Review it by hand instead of sending a generic draft."
+        )
+
+    raw = await call_structured(
         PROMPT_VERSION,
-        {
-            "agency_context": AGENCY_CONTEXT,
-            "full_name": lead.full_name,
-            "title": lead.title or "unknown",
-            "company_name": company.name,
-            "research_summary": research.summary,
-            "personalization_angles": "; ".join(research.personalization_angles) if isinstance(research.personalization_angles, list) else str(research.personalization_angles),
-        },
+        build_outreach_vars(
+            full_name=lead.full_name, title=lead.title, company_name=company.name,
+            summary=research.summary, angles=research.personalization_angles,
+        ),
     )
     draft = OutreachDraft(**raw)
 
-    # Persist in DB
-    db_outreach = ORMOutreachMessage(
+    # Re-drafting replaces the pending draft instead of piling up several
+    await db.execute(
+        update(ORMOutreachMessage)
+        .where(ORMOutreachMessage.lead_id == lead.id, ORMOutreachMessage.status == "draft")
+        .values(status="rejected")
+    )
+    db.add(ORMOutreachMessage(
         lead_id=lead.id,
         sequence_step=1,
         subject=draft.subject,
         body=draft.body,
         status="draft",
         prompt_version=PROMPT_VERSION,
-    )
-    db.add(db_outreach)
+    ))
+    advance(lead, "draft")
 
-    # Transition Lead Stage
-    lead.stage = "outreach_drafted"
-
-    # Log Activity
     await log_activity(
         db=db,
         lead_id=lead.id,
         actor="system",
         action="outreach_drafted",
-        detail={
-            "subject": draft.subject,
-            "prompt_version": PROMPT_VERSION,
-        },
+        detail={"subject": draft.subject, "prompt_version": PROMPT_VERSION},
     )
-
     return draft

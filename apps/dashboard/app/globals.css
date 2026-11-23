@@ -899,11 +899,257 @@ details p {
   opacity: 1;
 }
 
+
+/* Header status (prototype: "All systems running") */
+.who-status {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Shared notices and numbers */
+.notice {
+  border: 1px solid var(--line);
+  padding: 10px 14px;
+  margin: 12px 0;
+  font-size: 14px;
+}
+.num {
+  text-align: right;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+/* Campaign rows */
+.rail.camp {
+  grid-template-columns: 1.8fr 1fr 90px 90px 90px 100px;
+  padding-left: 16px;
+}
+
+/* Kanban */
+.kanban {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0;
+  border: 1px solid var(--line);
+  margin-top: 16px;
+}
+.kcol {
+  border-right: 1px solid var(--line);
+  padding: 14px;
+  min-height: 160px;
+}
+.kcol:last-child {
+  border-right: 0;
+}
+.kcol header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  font-weight: 700;
+  font-size: 13px;
+}
+.kcol header .tag {
+  margin: 0;
+}
+.kcard {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.kcard b {
+  display: block;
+  font-size: 14px;
+}
+.kcard small {
+  display: block;
+  color: var(--mute);
+  font-size: 12px;
+}
+.kempty {
+  color: var(--mute);
+  font-size: 12px;
+  text-align: center;
+  padding: 20px 0;
+}
+
+/* Lead dossier slide-over */
+.scrim,
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 60;
+}
+.dossier {
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  right: 0;
+  bottom: 0;
+  width: min(580px, 100%);
+  background: var(--bg);
+  color: var(--ink);
+  border-left: 1px solid var(--line);
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+}
+.dossier-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 20px;
+  height: 56px;
+  font-weight: 800;
+  border-bottom: 1px solid var(--line);
+}
+.dossier-head .btn {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.dossier-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+.dossier-body h2 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: -0.02em;
+}
+.dossier-body h3 {
+  margin: 28px 0 10px;
+  font-size: 16px;
+}
+.dossier-body .meta {
+  margin-bottom: 16px;
+}
+.dossier-body .row {
+  padding: 14px 14px 14px 0;
+}
+.facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0;
+  border-top: 1px solid var(--line);
+}
+.facts div {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.facts dt {
+  font-size: 12px;
+  color: var(--mute);
+}
+.facts dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.meter {
+  position: relative;
+  height: 22px;
+  border: 1px solid var(--line);
+}
+.meter span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--ink);
+}
+.meter em {
+  position: absolute;
+  right: 6px;
+  top: 1px;
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 600;
+  mix-blend-mode: difference;
+  color: #fff;
+}
+.angles {
+  margin: 0;
+  padding-left: 18px;
+}
+.body.editor {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 12px;
+  font: inherit;
+  resize: vertical;
+  margin-top: 8px;
+}
+
+/* Modal */
+.modal-scrim {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 100;
+}
+.modal {
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  padding: 28px;
+  max-width: 480px;
+  width: 100%;
+}
+.modal h2 {
+  font-size: 20px;
+  font-weight: 800;
+  margin: 0 0 8px;
+}
+.auth-field select {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 9px 12px;
+  font: inherit;
+}
+
+@media (max-width: 1100px) {
+  .who-user,
+  .who-status {
+    font-size: 0;
+  }
+  .who-status .dot {
+    margin-right: 0;
+  }
+}
+
 /* Responsive */
 @media (max-width: 760px) {
   header.app-header {
     padding: 0 16px;
-    gap: 12px;
+    gap: 0 12px;
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 56px;
+  }
+  header.app-header .logo,
+  header.app-header .who {
+    height: 56px;
+  }
+  header.app-header .who {
+    margin-left: auto;
+  }
+  /* Nav gets its own scrollable row so it isn't squeezed by the account buttons */
+  .app-nav {
+    order: 3;
+    flex-basis: 100%;
+    margin: 0 -16px;
+    padding: 0 8px;
+    border-top: 1px solid var(--line);
   }
   .who span {
     display: none;
@@ -949,6 +1195,20 @@ details p {
   .int .d {
     grid-column: 1 / -1;
     order: 3;
+  }
+  .rail.camp {
+    grid-template-columns: 1fr 1fr;
+  }
+  .rail.camp > :nth-child(3),
+  .rail.camp > :nth-child(4),
+  .rail.camp > :nth-child(5) {
+    display: none;
+  }
+  .facts {
+    grid-template-columns: 1fr;
+  }
+  .dossier-body {
+    padding: 20px 16px;
   }
 }
 

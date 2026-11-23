@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey, text
+from sqlalchemy import Boolean, Column, String, DateTime, ForeignKey, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from .base import Base
 
@@ -9,6 +9,7 @@ class ResearchBrief(Base):
     lead_id = Column(UUID(as_uuid=True), ForeignKey("leads.id"), nullable=False)
     summary = Column(String, nullable=False)
     personalization_angles = Column(JSONB, nullable=False, server_default=text("'[]'"))
+    insufficient_signal = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     model_used = Column(String, nullable=True)
     prompt_version = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
