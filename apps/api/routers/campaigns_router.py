@@ -12,13 +12,13 @@ from apps.api.auth.dependencies import Principal, any_user, require_roles
 from apps.api.db.session import get_db
 from apps.api.models.orm.campaign import Campaign
 from apps.api.models.orm.lead import Lead
+from apps.api.models.orm.outreach_message import OutreachMessage
 from apps.api.services.score_queries import latest_score_subquery
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 campaign_editor = require_roles("admin", "ops")
 
 REPLIED_STAGES = ("replied", "booked", "won")
-SENT_STAGES = ("outreach_sent", "replied", "booked", "won", "lost")
 
 
 class CampaignIn(BaseModel):
@@ -52,7 +52,7 @@ class CampaignOut(BaseModel):
     avg_score: int | None
     emails_sent: int
     replies: int
-    conversion_rate: float | None  # replies / emails sent
+    conversion_rate: float | None  # replies / leads emailed
 
 
 def _out(c: Campaign, sourced=0, avg=None, sent=0, replies=0) -> CampaignOut:
@@ -81,15 +81,24 @@ async def _get_owned(db: AsyncSession, campaign_id: uuid.UUID, principal: Princi
 @router.get("", response_model=list[CampaignOut])
 async def list_campaigns(db: AsyncSession = Depends(get_db), principal: Principal = Depends(any_user)):
     latest_score = latest_score_subquery()
+    # Leads that were actually emailed, counted from the messages (as on Performance).
+    # The stage alone misses leads that were emailed and then unsubscribed.
+    emailed = (
+        select(OutreachMessage.lead_id)
+        .where(OutreachMessage.status == "sent")
+        .group_by(OutreachMessage.lead_id)
+        .subquery()
+    )
     stats = (
         select(
             Lead.campaign_id.label("campaign_id"),
             func.count(Lead.id).label("sourced"),
             func.avg(latest_score.c.total_score).label("avg_score"),
-            func.count(case((Lead.stage.in_(SENT_STAGES), 1))).label("sent"),
+            func.count(emailed.c.lead_id).label("sent"),
             func.count(case((Lead.stage.in_(REPLIED_STAGES), 1))).label("replies"),
         )
         .outerjoin(latest_score, latest_score.c.lead_id == Lead.id)
+        .outerjoin(emailed, emailed.c.lead_id == Lead.id)
         .where(Lead.campaign_id.is_not(None))
         .group_by(Lead.campaign_id)
         .subquery()

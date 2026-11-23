@@ -9,9 +9,9 @@ This repository contains the **fully realized LeadForge Application**, which orc
 | Component | Tech Stack | Status |
 |---|---|---|
 | **API Backend** | FastAPI, Python 3.12+, SQLAlchemy (async) | Pipeline (ingest → research → score → draft → approve/send), campaigns, reports, health |
-| **Database** | PostgreSQL 15 | Migrations in `apps/api/db/migrations`, applied automatically on a fresh Docker volume |
+| **Database** | PostgreSQL (Neon in production) | Migrations in `apps/api/db/migrations`, applied by `python -m apps.api.scripts.migrate` |
 | **Dashboard UI** | Next.js 14 | Implements the monochrome prototype: Pipeline, Approvals, Campaigns, Performance, Integrations, Help |
-| **Orchestration** | Docker Compose | `db`, `api` and `dashboard` services |
+| **Hosting** | Vercel, Render, Neon, Cloudflare | All free tiers, no Docker (see [DEPLOY.md](DEPLOY.md)) |
 | **Automation** | Apollo / Clay / n8n | Push leads to `POST /leads/ingest` with the service key |
 
 ### Lead pipeline
@@ -41,23 +41,19 @@ cp apps/api/.env.example apps/api/.env
 
 Without `SMTP_USERNAME`/`SMTP_PASSWORD`, approved emails are logged by the API instead of sent.
 
-### 2. Start everything with Docker
+### 2. Database
+
+Any PostgreSQL 14+ works. The simplest is a free Neon project (or a separate Neon *branch* of your
+production database, so local work never touches live data). Put its connection string in
+`DATABASE_URL` in `apps/api/.env` exactly as Neon gives it; the API converts it for its driver.
+
+Then create the tables (safe to run again; it only applies new migrations):
 
 ```bash
-docker compose up -d --build
+python -m apps.api.scripts.migrate
 ```
 
-- `leadforge-db` (Postgres) on port `5435`. On first start it applies every file in `apps/api/db/migrations`.
-- `leadforge-api` (FastAPI) on port `8000`
-- `leadforge-dashboard` (Next.js) on port `3001`
-
-Existing database? Apply new migrations by hand, in order, for example:
-
-```bash
-psql "postgresql://leadforge:password123@localhost:5435/leadforge" -f apps/api/db/migrations/0004_pipeline.sql
-```
-
-### 3. Or run the API locally
+### 3. Run the API
 
 Run from the repo root so `apps.api` imports resolve. Settings come from `apps/api/.env`
 (a `.env` in the current directory, or real environment variables, override it):
@@ -68,9 +64,15 @@ pip install -r apps/api/requirements.txt
 uvicorn apps.api.main:app --reload --port 8000
 ```
 
+Optional demo data (14 synthetic leads at every stage, `.example` domains only):
+
+```bash
+python -m apps.api.scripts.seed_demo          # --reset to recreate, --remove to delete
+```
+
 ### 4. Dashboard
 
-Open **http://localhost:3001** and sign in (see below). Set `NEXT_PUBLIC_API_BASE` to the API's URL
+`cd apps/dashboard`, `npm install`, `npm run dev -- -p 3001`, then open **http://localhost:3001** and sign in (see below). Set `NEXT_PUBLIC_API_BASE` to the API's URL
 when the API isn't on `http://localhost:8000`.
 
 ### 5. Hosting (free)
@@ -88,7 +90,7 @@ Every API route except `/health`, `/auth/login` and the signed unsubscribe link 
 **First-time setup**
 
 ```bash
-# 1. Migrations are applied automatically on a fresh Docker database (see above)
+# 1. Create the tables: python -m apps.api.scripts.migrate
 
 # 2. Set secrets in apps/api/.env (see .env.example)
 #    JWT_SECRET is required when ENVIRONMENT is not "development"
@@ -123,6 +125,10 @@ There are no default accounts. Running the same command for an existing email re
 ```bash
 pytest apps/api/tests/ -v
 ```
+
+These need no database. The end-to-end test in `test_api_integration.py` writes real rows, so it is
+skipped unless `RUN_DB_TESTS=1` is set, with `DATABASE_URL` pointing at a throwaway database
+(never the live one) that has had `python -m apps.api.scripts.migrate` run on it.
 
 `scoring_service.py` is the one component with real unit test coverage by design — it's the part where a silent regression is expensive (bad leads scoring as Hot). See `/docs/07-AI-Context-Core.md` §4 for the full testing policy.
 
