@@ -26,8 +26,11 @@ export function wakeApi() {
   fetch(`${API_BASE}/health`, { cache: "no-store" }).catch(() => {});
 }
 
-// Render's proxy answers 502/503/504 while the app itself isn't up yet.
-const STARTING_STATUSES = new Set([502, 503, 504]);
+// While the API is starting, Render's proxy answers without CORS headers, so the
+// browser reports a network error (handled below). 503/504 can also show up.
+// 502 is NOT retried: the API itself uses 502 when Gemini or SMTP fails, and
+// retrying that would repeat the AI call for 90 s and hide the real error.
+const STARTING_STATUSES = new Set([503, 504]);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**

@@ -46,9 +46,11 @@ async def fail_step(db: AsyncSession, stage: str, lead_id: uuid.UUID, exc: Excep
     """Rolls back, records the failure in pipeline_errors (shown on Integrations) and
     returns the HTTP error to raise. Upstream AI/email failures are 502, not 500."""
     await db.rollback()
-    logger.error("%s failed for lead %s: %s", stage, lead_id, exc)
+    # The user sees the short message; the log and pipeline_errors keep the raw provider error
+    raw = f"{exc} | cause: {exc.__cause__}" if exc.__cause__ else str(exc)
+    logger.error("%s failed for lead %s: %s", stage, lead_id, raw)
     try:
-        db.add(PipelineError(stage=stage, payload={"lead_id": str(lead_id)}, error_message=str(exc)[:2000]))
+        db.add(PipelineError(stage=stage, payload={"lead_id": str(lead_id)}, error_message=raw[:2000]))
         await db.commit()
     except Exception:  # noqa: BLE001 - recording the error must never hide it
         await db.rollback()

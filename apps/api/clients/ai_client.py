@@ -4,6 +4,7 @@ from route handlers.' This is where retries, logging, and prompt-version
 tagging live centrally.
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -94,20 +95,61 @@ async def call_structured(prompt_name: str, template_vars: dict, max_retries: in
                 config=config,
             )
             return _parse_json(response.text)
-        except (json.JSONDecodeError, genai_errors.APIError) as exc:
+        except json.JSONDecodeError as exc:
+            last_error = exc  # the model can return broken JSON now and then: try again
+        except genai_errors.APIError as exc:
             last_error = exc
-            logger.warning(
-                "ai_client call failed (attempt %s/%s) for prompt=%s: %s",
-                attempt, max_retries, prompt_name, exc,
-            )
+            if not _is_retryable(exc):
+                logger.warning("ai_client call failed for prompt=%s (not retried): %s", prompt_name, exc)
+                raise AIError(friendly_error(exc)) from exc
+            if attempt < max_retries:
+                # Rate limits and server errors usually clear after a short wait
+                await asyncio.sleep(2 * attempt)
+        logger.warning(
+            "ai_client call failed (attempt %s/%s) for prompt=%s: %s",
+            attempt, max_retries, prompt_name, last_error,
+        )
 
-    raise RuntimeError(
-        f"ai_client.call_structured failed after {max_retries} attempts "
-        f"for prompt={prompt_name}: {last_error}"
-    )
+    raise AIError(friendly_error(last_error))
+
+
+class AIError(RuntimeError):
+    """An AI call failed. The message is short and says what to do; the raw
+    provider error is in the log (and chained as __cause__)."""
+
+
+def _status(exc: Exception) -> int | None:
+    return getattr(exc, "code", None)
+
+
+def _is_retryable(exc: genai_errors.APIError) -> bool:
+    code = _status(exc)
+    return code == 429 or (code is not None and code >= 500)
+
+
+def friendly_error(exc: Exception | None) -> str:
+    """One plain sentence for the dashboard instead of Google's raw JSON."""
+    if isinstance(exc, json.JSONDecodeError):
+        return "Gemini returned an unreadable answer three times. Try again."
+    code = _status(exc) if exc is not None else None
+    text = str(exc or "")
+    if "API_KEY_INVALID" in text or "API key not valid" in text or code in (401, 403):
+        return "Gemini rejected the API key. Check GEMINI_API_KEY in the API's settings (Render → Environment)."
+    if code == 429:
+        return "Gemini's free-tier rate limit was reached. Wait about a minute, then try again."
+    if code == 404:
+        return f"The Gemini model '{MODEL}' isn't available to this key. Check LEADFORGE_MODEL."
+    if code is not None and code >= 500:
+        return "Gemini is having problems right now. Try again in a minute."
+    if code == 400:
+        return "Gemini refused the request (400). See the API log for details."
+    return f"The AI call failed: {text[:200]}"
 
 
 async def probe() -> str:
     """Cheap check that the key works and the model exists (no tokens generated)."""
-    await _get_client().aio.models.get(model=MODEL)
+    try:
+        await _get_client().aio.models.get(model=MODEL)
+    except genai_errors.APIError as exc:
+        raise AIError(friendly_error(exc)) from exc
     return MODEL
